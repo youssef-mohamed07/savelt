@@ -1,0 +1,62 @@
+# DigitalOcean App Platform Configuration
+# Deploy with: doctl apps create --spec .do/app.yaml
+
+name: ecommerce-api
+
+services:
+  - name: api
+    github:
+      repo: your-username/your-repo
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    dockerfile_path: Dockerfile
+    http_port: 3001
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    
+    # Health check
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 10
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    
+    # Environment variables (set in DO dashboard)
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: MONGO_URI
+        scope: RUN_TIME
+        type: SECRET
+      - key: JWT_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: EMAIL_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: EMAIL_PASS
+        scope: RUN_TIME
+        type: SECRET
+    
+    # Routes
+    routes:
+      - path: /
+
+# Optional: Add a worker for WebSocket if needed
+# workers:
+#   - name: websocket
+#     github:
+#       repo: your-username/your-repo
+#       branch: main
+#     source_dir: /
+#     dockerfile_path: Dockerfile.ws
+#     instance_count: 1
+#     instance_size_slug: basic-xxs
+#     envs:
+#       - key: WS_PORT
+#         value: "3002"
