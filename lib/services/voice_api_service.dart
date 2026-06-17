@@ -135,7 +135,8 @@ class VoiceApiService {
         return VoiceApiResult.success(data);
       } else {
         print('❌ Server returned error status: ${response.statusCode}');
-        return VoiceApiResult.error('Failed to analyze voice: ${response.statusCode} - ${response.body}');
+        return VoiceApiResult.error(_parseServerError(response.body) ??
+            'Failed to analyze voice: ${response.statusCode}');
       }
     } on TimeoutException {
       print('❌ Request timeout');
@@ -144,6 +145,22 @@ class VoiceApiService {
       print('❌ Voice analysis error: $e');
       return VoiceApiResult.error('Network error: $e');
     }
+  }
+
+  String? _parseServerError(String body) {
+    try {
+      final data = jsonDecode(body);
+      final error = data['error'];
+      if (error is Map<String, dynamic>) {
+        final message = error['message'];
+        if (message is String && message.isNotEmpty) return message;
+      }
+      final message = data['message'];
+      if (message is String && message.isNotEmpty) return message;
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   // Test the Voice API connection (updated endpoints)

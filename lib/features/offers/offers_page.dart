@@ -1,10 +1,11 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart';
-import '../../core/config/api_config.dart';
 import '../../core/services/auth_api_service.dart';
+import '../../core/services/offers_api_service.dart';
+import '../../core/utils/marketplace_url.dart';
 import '../../widgets/amazon_product_image.dart';
+import '../../widgets/marketplace_badge.dart';
 import 'widgets/offer_product_card.dart';
 
 class OffersPage extends StatefulWidget {
@@ -20,7 +21,6 @@ class _OffersPageState extends State<OffersPage> {
 
   List<Map<String, dynamic>> _products = [];
   bool _isLoading = true;
-  final Map<int, bool> _saved = {};
 
   @override
   void initState() {
@@ -28,111 +28,42 @@ class _OffersPageState extends State<OffersPage> {
     _loadOffers();
   }
 
-  Future<void> _loadOffers() async {
+  Future<void> _loadOffers({bool force = false}) async {
     setState(() => _isLoading = true);
+
+    final userId = AuthApiService.instance.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      setState(() { _products = []; _isLoading = false; });
+      return;
+    }
+
+    final api = OffersApiService.instance;
+    final stale = api.cachedFull ?? api.cachedPreview;
+    if (stale != null && stale.isNotEmpty) {
+      setState(() {
+        _products = stale;
+        _isLoading = false;
+      });
+    }
+
     try {
-      final userId = AuthApiService.instance.currentUser?.uid;
-      if (userId == null || userId.isEmpty) {
-        setState(() { _products = []; _isLoading = false; });
-        return;
-      }
-      final dio = Dio(BaseOptions(
-        baseUrl: ApiConfig.baseUrl,
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 20),
-      ));
-      final token = await AuthApiService.instance.getToken();
-      if (token != null) dio.options.headers['token'] = token;
-
-      final response = await dio.get('/api/offers', queryParameters: {'userId': userId});
-      if (response.data['success'] == true) {
-        final byCategory = response.data['byCategory'] as List<dynamic>?;
-        final rawProducts = byCategory != null && byCategory.isNotEmpty
-            ? byCategory.expand((c) => List<Map<String, dynamic>>.from(c['products'] ?? [])).toList()
-            : List<Map<String, dynamic>>.from(response.data['products'] ?? []);
-
-        final products = _dedupeAndFilter(rawProducts.map(_mapProduct).toList());
-        setState(() {
-          _products = products;
-          _isLoading = false;
-        });
-        return;
+      final products = await api.fetchAll(force: force);
+      if (!mounted) return;
+      setState(() {
+        _products = products;
+        _isLoading = false;
+      });
+    } on DioException catch (e) {
+      debugPrint('❌ [Offers] Error: ${e.message}');
+      if (mounted && _products.isEmpty) {
+        setState(() => _isLoading = false);
       }
     } catch (e) {
       debugPrint('❌ [Offers] Error: $e');
+      if (mounted && _products.isEmpty) {
+        setState(() => _isLoading = false);
+      }
     }
-    setState(() { _products = []; _isLoading = false; });
-  }
-
-  List<Map<String, dynamic>> _dedupeAndFilter(List<Map<String, dynamic>> items) {
-    final seen = <String>{};
-    return items.where((p) {
-      final url = p['imageUrl'] as String?;
-      if (url == null || url.isEmpty) return false;
-      final key = (p['name'] ?? '').toString().trim().toLowerCase();
-      if (key.isEmpty || seen.contains(key)) return false;
-      seen.add(key);
-      return true;
-    }).toList();
-  }
-
-  Map<String, dynamic> _mapProduct(Map<String, dynamic> p) {
-    final title = (p['displayTitle'] ?? p['title'] ?? p['name'] ?? 'Product').toString();
-    final price = _formatPrice(p['price']);
-    final oldPrice = _formatPrice(p['original_price'] ?? p['oldPrice'] ?? p['originalPrice']);
-
-    return {
-      'name': title,
-      'price': price,
-      'oldPrice': oldPrice != price ? oldPrice : '',
-      'discount': _formatDiscount(p['discount']?.toString(), price, oldPrice),
-      'rating': _formatRating(p['rating']),
-      'reviews': _formatReviews(p['reviews'] ?? p['num_ratings']),
-      'imageUrl': normalizeAmazonImageUrl(p['image']),
-      'url': _fixUrl(p['url']),
-    };
-  }
-
-  String _formatPrice(dynamic val) {
-    if (val == null) return '';
-    final s = val.toString().trim();
-    if (s.isEmpty || s == 'null') return '';
-    final num = double.tryParse(s.replaceAll(RegExp(r'[^0-9.]'), ''));
-    if (num != null && num > 0) return 'EGP ${num.toStringAsFixed(2)}';
-    if (s.toUpperCase().contains('EGP')) return s;
-    return 'EGP $s'.replaceAll('جنيه', '').replaceAll('ج.م', '').trim();
-  }
-
-  String _formatDiscount(String? raw, String price, String oldPrice) {
-    if (raw != null && raw.trim().isNotEmpty) {
-      final d = raw.trim();
-      if (d.startsWith('-') || d.toUpperCase().contains('SAVE') || d.contains('%')) return d;
-    }
-    final p = double.tryParse(price.replaceAll(RegExp(r'[^0-9.]'), ''));
-    final o = double.tryParse(oldPrice.replaceAll(RegExp(r'[^0-9.]'), ''));
-    if (p != null && o != null && o > p && p > 0) {
-      return '-${(((o - p) / o) * 100).round()}%';
-    }
-    return '';
-  }
-
-  String _formatRating(dynamic val) {
-    final n = double.tryParse(val?.toString() ?? '');
-    return (n ?? 4.0).toStringAsFixed(1);
-  }
-
-  String _formatReviews(dynamic val) {
-    final n = int.tryParse(val?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '');
-    if (n == null) return '0';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
-    return n.toString();
-  }
-
-  String _fixUrl(dynamic val) {
-    if (val == null || val.toString().isEmpty) return 'https://www.amazon.eg';
-    return val.toString()
-        .replaceAll('amazon.com', 'amazon.eg')
-        .replaceAll('amazon.co.uk', 'amazon.eg');
   }
 
   int get _dealCount => _products.where((p) => (p['discount'] ?? '').toString().isNotEmpty).length;
@@ -178,7 +109,7 @@ class _OffersPageState extends State<OffersPage> {
 
   Widget _buildContent() {
     return RefreshIndicator(
-      onRefresh: _loadOffers,
+      onRefresh: () => _loadOffers(force: true),
       color: _navy,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
@@ -217,12 +148,7 @@ class _OffersPageState extends State<OffersPage> {
                       (context, index) {
                         final productIndex = _products.length > 1 ? index + 1 : index;
                         if (productIndex >= _products.length) return const SizedBox.shrink();
-                        final saved = _saved[productIndex] ?? false;
-                        return OfferProductCard(
-                          offer: _products[productIndex],
-                          saved: saved,
-                          onSaveToggle: () => setState(() => _saved[productIndex] = !saved),
-                        );
+                        return OfferProductCard(offer: _products[productIndex]);
                       },
                       childCount: _products.length > 1 ? _products.length - 1 : _products.length,
                     ),
@@ -277,7 +203,7 @@ class _OffersPageState extends State<OffersPage> {
                 const SizedBox(height: 4),
                 Text(
                   dealCount == null
-                      ? 'Curating deals from Amazon.eg…'
+                      ? 'Curating deals from Amazon, Noon & Jumia…'
                       : '$dealCount picks · ${_dealCount > 0 ? '$_dealCount on sale' : 'based on your spending'}',
                   style: GoogleFonts.inter(
                     fontSize: 13,
@@ -288,23 +214,6 @@ class _OffersPageState extends State<OffersPage> {
               ],
             ),
           ),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-              boxShadow: [
-                BoxShadow(
-                  color: _navy.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.notifications_none_rounded, color: _navy, size: 22),
-          ),
         ],
       ),
     );
@@ -313,7 +222,7 @@ class _OffersPageState extends State<OffersPage> {
   Widget _buildFeaturedDeal(Map<String, dynamic> offer) {
     final discount = offer['discount']?.toString() ?? '';
     final hasDiscount = discount.isNotEmpty;
-    final url = offer['url']?.toString() ?? 'https://www.amazon.eg';
+    final marketplace = offer['marketplace']?.toString() ?? 'amazon';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -321,7 +230,11 @@ class _OffersPageState extends State<OffersPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(22),
-          onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+          onTap: () => openMarketplaceProduct(
+            context,
+            url: offer['url']?.toString(),
+            marketplace: marketplace,
+          ),
           child: Ink(
             decoration: BoxDecoration(
               gradient: const LinearGradient(
@@ -440,7 +353,7 @@ class _OffersPageState extends State<OffersPage> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -448,32 +361,23 @@ class _OffersPageState extends State<OffersPage> {
         ),
         child: Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFF818CF8).withValues(alpha: 0.2),
-                    const Color(0xFF6366F1).withValues(alpha: 0.15),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, size: 18, color: Color(0xFF6366F1)),
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Matched to your recent purchases on Amazon.eg',
+                'Deals from top stores',
                 style: GoogleFonts.inter(
-                  fontSize: 12.5,
-                  color: const Color(0xFF475569),
-                  height: 1.35,
-                  fontWeight: FontWeight.w500,
+                  fontSize: 13,
+                  color: const Color(0xFF334155),
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
+            const SizedBox(width: 10),
+            _StoreLogoButton(store: 'amazon'),
+            const SizedBox(width: 6),
+            _StoreLogoButton(store: 'noon'),
+            const SizedBox(width: 6),
+            _StoreLogoButton(store: 'jumia'),
           ],
         ),
       ),
@@ -551,6 +455,24 @@ class _OffersPageState extends State<OffersPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _StoreLogoButton extends StatelessWidget {
+  final String store;
+
+  const _StoreLogoButton({required this.store});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => openMarketplaceProduct(context, marketplace: store),
+        borderRadius: BorderRadius.circular(8),
+        child: MarketplaceBadge(marketplace: store, height: 24, compact: true),
       ),
     );
   }

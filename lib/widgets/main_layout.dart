@@ -13,7 +13,7 @@ import '../features/transactions/bloc/transaction_bloc.dart';
 import '../features/transactions/bloc/transaction_event.dart';
 import 'dialogs/ocr_scanning_sheet.dart';
 import 'dialogs/simple_voice_dialog.dart';
-import 'dialogs/ocr_results_dialog.dart';
+import '../core/services/ocr_service.dart';
 
 class MainLayout extends StatefulWidget {
   final int initialIndex;
@@ -312,6 +312,7 @@ class _MainLayoutState extends State<MainLayout>
   }
 
   void _showScanOptions() {
+    OcrService.instance.isAvailable();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -437,9 +438,7 @@ class _MainLayoutState extends State<MainLayout>
     if (!mounted || result == null) return;
     if (result.isCancelled) return;
 
-    if (result.isSuccess && result.invoice != null) {
-      await showOcrResultsDialog(context, invoice: result.invoice!);
-    } else {
+    if (!result.isSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

@@ -53,5 +53,20 @@
 		<string>Smart Finance Tracker needs your microphone to record voice expenses.</string>
 		<key>NSSpeechRecognitionUsageDescription</key>
 		<string>Smart Finance Tracker uses speech recognition to turn your voice into expense entries.</string>
+		<key>GIDClientID</key>
+		<string>16052237336-r9jgp3o2cqo70hpfpg4c7q8eioq7mu7m.apps.googleusercontent.com</string>
+		<key>GIDServerClientID</key>
+		<string>16052237336-o9pt8bkl1oa0u18o7btqo3q4a0hg1cvq.apps.googleusercontent.com</string>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.16052237336-r9jgp3o2cqo70hpfpg4c7q8eioq7mu7m</string>
+				</array>
+			</dict>
+		</array>
 	</dict>
 </plist>

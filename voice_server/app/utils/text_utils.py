@@ -26,8 +26,37 @@ def normalize_arabic_text(text: str) -> str:
     # Normalize Arabic characters
     text = text.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
     text = text.replace('ة', 'ه').replace('ى', 'ي')
+    text = normalize_voice_misrecognitions(text)
     
     return text
+
+
+def normalize_voice_misrecognitions(text: str) -> str:
+    """Fix common Arabic ASR mistakes in short expense voice notes."""
+    replacements = {
+        # Currency / money
+        r'\bجنك\b': 'جنيه',
+        r'\bجنيك\b': 'جنيه',
+        r'\bجنه\b': 'جنيه',
+        r'\bجنية\b': 'جنيه',
+        # Common purchase verbs
+        r'\bشتريت\b': 'اشتريت',
+        r'\bاشتريت انا\b': 'اشتريت',
+        r'\bانا اشتريت\b': 'اشتريت',
+        # Food/snacks
+        r'\bشكلا\b': 'شوكولاته',
+        r'\bشوكلا\b': 'شوكولاته',
+        r'\bشوكلاطه\b': 'شوكولاته',
+        r'\bشكولاته\b': 'شوكولاته',
+        r'\bشيبسي\b': 'شيبسي',
+        r'\bشبسي\b': 'شيبسي',
+        r'\bشيبس\b': 'شيبسي',
+    }
+
+    normalized = text
+    for pattern, replacement in replacements.items():
+        normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+    return normalized
 
 
 def extract_amounts_from_text(text: str) -> List[Tuple[float, int]]:
@@ -130,21 +159,106 @@ def extract_amounts_from_text(text: str) -> List[Tuple[float, int]]:
                 continue
     
     # Remove duplicates and sort by position
-    unique_amounts = []
-    seen_positions = set()
-    
-    for amount, pos in sorted(amounts, key=lambda x: x[1]):
-        position_key = pos // 5  # Group nearby positions
-        if position_key not in seen_positions:
-            seen_positions.add(position_key)
-            unique_amounts.append((amount, pos))
+    b_prefixed = _extract_b_prefixed_amounts(text_lower)
+    unique_amounts = merge_amount_lists(amounts, b_prefixed)
     
     logger.debug(f"Extracted {len(unique_amounts)} amounts: {[a[0] for a in unique_amounts]}")
     return unique_amounts
 
 
+def _extract_b_prefixed_amounts(text: str) -> List[Tuple[float, int]]:
+    """Match Egyptian price phrases like بخمسة، بتلاتين، ب100."""
+    word_map = {
+        'واحد': 1, 'واحده': 1, 'اتنين': 2, 'اثنين': 2,
+        'تلاته': 3, 'ثلاثه': 3, 'ثلاثة': 3, 'تلاتة': 3,
+        'اربعه': 4, 'اربعة': 4, 'اربع': 4,
+        'خمسه': 5, 'خمسة': 5, 'خمس': 5,
+        'سته': 6, 'ستة': 6, 'ست': 6,
+        'سبعه': 7, 'سبعة': 7, 'سبع': 7,
+        'تمانيه': 8, 'ثمانية': 8, 'تمان': 8, 'ثمان': 8,
+        'تسعه': 9, 'تسعة': 9, 'تسع': 9,
+        'عشره': 10, 'عشرة': 10, 'عشر': 10,
+        'عشرين': 20, 'عشرون': 20,
+        'تلاتين': 30, 'ثلاثين': 30, 'ثلاثون': 30,
+        'اربعين': 40, 'اربعون': 40,
+        'خمسين': 50, 'خمسون': 50,
+        'ستين': 60, 'ستون': 60,
+        'سبعين': 70, 'سبعون': 70,
+        'تمانين': 80, 'ثمانين': 80, 'ثمانون': 80,
+        'تسعين': 90, 'تسعون': 90,
+        'ميه': 100, 'مية': 100, 'مائة': 100, 'مئة': 100,
+        'ميتين': 200, 'متين': 200,
+        'تلتمية': 300, 'تلاتمية': 300, 'ثلاثمية': 300,
+        'خمسمية': 500, 'خمسمائة': 500,
+        'الف': 1000, 'ألف': 1000,
+    }
+
+    amounts: List[Tuple[float, int]] = []
+    words_alt = '|'.join(re.escape(w) for w in sorted(word_map.keys(), key=len, reverse=True))
+    pattern = rf'(?:^|[\s،,])ب(?:ـ|-)?({words_alt}|\d+(?:[.,]\d+)?)(?=\s|$|[^\w\u0600-\u06FF])'
+
+    for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+        token = match.group(1).lower()
+        if token.replace('.', '').replace(',', '').isdigit():
+            value = float(token.replace(',', ''))
+        else:
+            value = word_map.get(token)
+        if value and value > 0:
+            amounts.append((float(value), match.start(1)))
+
+    return amounts
+
+
+def merge_amount_lists(*lists: List[Tuple[float, int]]) -> List[Tuple[float, int]]:
+    """Merge amount lists, dedupe nearby positions, sort by position."""
+    combined: List[Tuple[float, int]] = []
+    for lst in lists:
+        combined.extend(lst)
+
+    unique: List[Tuple[float, int]] = []
+    seen_positions = set()
+    for amount, pos in sorted(combined, key=lambda x: x[1]):
+        position_key = pos // 4
+        if position_key not in seen_positions:
+            seen_positions.add(position_key)
+            unique.append((amount, pos))
+    return unique
+
+
+_GREETING_PREFIX_RE = re.compile(
+    r'^(?:'
+    r'(?:مرحبا|اهلا|السلام عليكم|هاي|hello|hi|good morning|good evening)'
+    r'[^؟!.]*[؟!.]?\s*'
+    r')+',
+    re.IGNORECASE | re.UNICODE,
+)
+
+_SMALLTALK_PREFIX_RE = re.compile(
+    r'^(?:كيف حالك|ازيك|عامل ايه|كيفك|how are you|what\'s up)'
+    r'[^؟!.]*[؟!.]?\s*',
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def strip_conversational_prefix(text: str) -> str:
+    """Remove greetings / small talk before expense extraction."""
+    if not text:
+        return text
+
+    cleaned = text.strip()
+    for _ in range(3):
+        updated = _GREETING_PREFIX_RE.sub('', cleaned).strip()
+        updated = _SMALLTALK_PREFIX_RE.sub('', updated).strip()
+        if updated == cleaned:
+            break
+        cleaned = updated
+    return cleaned or text
+
+
 def split_text_into_segments(text: str) -> List[str]:
     """Split text into transaction segments - enhanced for mixed languages"""
+    text = strip_conversational_prefix(text)
+
     # Arabic and English patterns - more comprehensive
     patterns = [
         r'وبعدين\s*',
@@ -162,6 +276,8 @@ def split_text_into_segments(text: str) -> List[str]:
         r'next\s*',
         # Mixed patterns
         r'و\s*(?=i\s+go|i\s+get)',
+        # Item + price lists: شيبسي ب30 وكراتي ب10
+        r' و(?=[\u0600-\u06FFa-zA-Z]+(?:\s+[\u0600-\u06FFa-zA-Z]+){0,4}\s+ب(?:ـ|-)?)',
     ]
     
     combined_pattern = '|'.join(patterns)

@@ -15,9 +15,9 @@ class OcrScannerService {
   Future<File?> pickReceipt({required bool fromCamera}) async {
     final picked = await _picker.pickImage(
       source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-      imageQuality: 90,
-      maxWidth: 2000,
-      maxHeight: 2000,
+      imageQuality: 72,
+      maxWidth: 1200,
+      maxHeight: 1600,
     );
     if (picked == null) return null;
     return File(picked.path);
@@ -26,9 +26,11 @@ class OcrScannerService {
   /// Scan an already-picked receipt file.
   Future<OcrResult> scanReceiptFile(File imageFile, {double price = 0}) async {
     try {
-      final isLoggedIn = await AuthApiService.instance.isAuthenticated();
-      if (!isLoggedIn) {
-        return OcrResult.failure(message: 'Please log in to scan receipts');
+      if (!AuthApiService.instance.isLoggedIn) {
+        final isLoggedIn = await AuthApiService.instance.isAuthenticated();
+        if (!isLoggedIn) {
+          return OcrResult.failure(message: 'Please log in to scan receipts');
+        }
       }
 
       final ocrResult = await OcrService.instance.scanReceipt(imageFile);

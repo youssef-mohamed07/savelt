@@ -91,6 +91,50 @@ export const sendOTPEmail = async (email, otp, name = 'User') => {
 };
 
 /**
+ * Send password reset OTP email
+ */
+export const sendPasswordResetOTPEmail = async (email, otp, name = 'User') => {
+    const subject = 'Password Reset Code - Expense Tracker';
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: #0D5DB8; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+                .otp-box { background: #0D5DB8; color: white; font-size: 32px; letter-spacing: 8px; padding: 20px; text-align: center; border-radius: 10px; margin: 20px 0; }
+                .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Expense Tracker</h1>
+                </div>
+                <div class="content">
+                    <h2>Hello ${name}!</h2>
+                    <p>Use this code to reset your password:</p>
+                    <div class="otp-box">${otp}</div>
+                    <p>This code will expire in 10 minutes.</p>
+                    <p>If you didn't request a password reset, please ignore this email.</p>
+                </div>
+                <div class="footer">
+                    <p>© ${new Date().getFullYear()} Expense Tracker. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+
+    const text = `Hello ${name}!\n\nYour password reset code is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, please ignore this email.`;
+
+    return sendEmail({ to: email, subject, text, html });
+};
+
+/**
  * Send password reset email
  * @param {string} email - Recipient email
  * @param {string} resetLink - Password reset link

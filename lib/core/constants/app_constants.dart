@@ -64,9 +64,6 @@ class AppConstants {
   static final DateTime defaultStartDate = DateTime(2024, 1, 1);
 
   // Database
-  static const String databaseName = 'saveit_app.db';
-  static const int databaseVersion = 1;
-
   // API timeouts
   static const Duration apiTimeout = Duration(seconds: 30);
   static const Duration syncDelay = Duration(seconds: 1);

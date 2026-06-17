@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../../core/utils/marketplace_url.dart';
 import '../../../widgets/amazon_product_image.dart';
+import '../../../widgets/marketplace_badge.dart';
 
 class HomeOffersCarousel extends StatelessWidget {
   final List<Map<String, dynamic>> offers;
@@ -10,6 +11,9 @@ class HomeOffersCarousel extends StatelessWidget {
   final String? errorMessage;
   final VoidCallback onShowMore;
   final VoidCallback? onRetry;
+  final int maxVisible;
+  final double childAspectRatio;
+  final bool horizontal;
 
   static const _navy = Color(0xFF0D5DB8);
 
@@ -20,6 +24,9 @@ class HomeOffersCarousel extends StatelessWidget {
     this.errorMessage,
     required this.onShowMore,
     this.onRetry,
+    this.maxVisible = 4,
+    this.childAspectRatio = 0.68,
+    this.horizontal = false,
   });
 
   @override
@@ -30,7 +37,7 @@ class HomeOffersCarousel extends StatelessWidget {
         Row(
           children: [
             Text(
-              'Deals for you',
+              'Products for you',
               style: GoogleFonts.inter(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
@@ -68,16 +75,29 @@ class HomeOffersCarousel extends StatelessWidget {
           _buildErrorState(errorMessage!)
         else if (offers.isEmpty)
           _buildEmptyState()
+        else if (horizontal)
+          SizedBox(
+            height: 210,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: offers.length > maxVisible ? maxVisible : offers.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) => SizedBox(
+                width: 150,
+                child: _OfferCard(offer: offers[index], compact: true),
+              ),
+            ),
+          )
         else
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: offers.length > 4 ? 4 : offers.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            itemCount: offers.length > maxVisible ? maxVisible : offers.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 0.68,
+              childAspectRatio: childAspectRatio,
             ),
             itemBuilder: (context, index) => _OfferCard(offer: offers[index]),
           ),
@@ -89,12 +109,12 @@ class HomeOffersCarousel extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: 4,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      itemCount: maxVisible.clamp(1, 4),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
-        childAspectRatio: 0.68,
+        childAspectRatio: childAspectRatio,
       ),
       itemBuilder: (_, __) => Container(
         decoration: BoxDecoration(
@@ -170,7 +190,7 @@ class HomeOffersCarousel extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Add expenses to get personalized Amazon deals',
+            'Add expenses to get deals from Amazon, Noon & Jumia',
             style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF94A3B8)),
             textAlign: TextAlign.center,
           ),
@@ -195,8 +215,9 @@ class HomeOffersCarousel extends StatelessWidget {
 
 class _OfferCard extends StatelessWidget {
   final Map<String, dynamic> offer;
+  final bool compact;
 
-  const _OfferCard({required this.offer});
+  const _OfferCard({required this.offer, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -206,10 +227,14 @@ class _OfferCard extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         HapticFeedback.lightImpact();
-        final url = offer['url'] as String? ?? 'https://www.amazon.eg';
-        launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        openMarketplaceProduct(
+          context,
+          url: offer['url'] as String?,
+          marketplace: offer['marketplace']?.toString() ?? 'amazon',
+        );
       },
       child: Container(
+        height: compact ? double.infinity : null,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -241,6 +266,7 @@ class _OfferCard extends StatelessWidget {
                         height: 80,
                         width: double.infinity,
                         fit: BoxFit.contain,
+                        marketplace: offer['marketplace']?.toString() ?? 'amazon',
                       ),
                     ),
                   ),
@@ -264,6 +290,15 @@ class _OfferCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: MarketplaceBadge(
+                      marketplace: offer['marketplace']?.toString() ?? 'amazon',
+                      height: 18,
+                      compact: true,
+                    ),
+                  ),
                 ],
               ),
             ),

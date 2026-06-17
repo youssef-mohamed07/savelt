@@ -5,15 +5,19 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/services/auth_api_service.dart';
 import '../../profile/bloc/user_bloc.dart';
 import '../../profile/bloc/user_state.dart';
+import '../bloc/analytics_bloc.dart';
+import '../bloc/analytics_state.dart';
+import '../bloc/expense_bloc.dart';
+import '../bloc/expense_state.dart';
 
-class HomeDashboardHeader extends StatelessWidget {
+class HomeDashboardHeader extends StatefulWidget {
   final VoidCallback onNotificationsTap;
   final VoidCallback onReminders;
   final VoidCallback onCategories;
   final int unreadCount;
 
   static const _navy = Color(0xFF0D5DB8);
-  static const _navyLight = Color(0xFF1478E0);
+  static const _navyDark = Color(0xFF0A4A94);
 
   const HomeDashboardHeader({
     super.key,
@@ -24,84 +28,129 @@ class HomeDashboardHeader extends StatelessWidget {
   });
 
   @override
+  State<HomeDashboardHeader> createState() => _HomeDashboardHeaderState();
+}
+
+class _HomeDashboardHeaderState extends State<HomeDashboardHeader> {
+  bool _hideBalance = false;
+
+  String _greetingSubtitle() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  @override
   Widget build(BuildContext context) {
     return BlocBuilder<UserBloc, UserState>(
       builder: (context, userState) {
-        final auth = AuthApiService.instance;
-        final displayName = auth.currentUser?.displayName ?? userState.name;
-        final firstName =
-            (displayName.isEmpty ? 'User' : displayName).split(' ').first;
+        return BlocBuilder<AnalyticsBloc, AnalyticsState>(
+          builder: (context, analytics) {
+            return BlocBuilder<ExpenseBloc, ExpenseState>(
+              builder: (context, expenseState) {
+                final auth = AuthApiService.instance;
+                final displayName =
+                    auth.currentUser?.displayName ?? userState.name;
+                final firstName =
+                    (displayName.isEmpty ? 'User' : displayName).split(' ').first;
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _GreetingCard(
-              firstName: firstName,
-              unreadCount: unreadCount,
-              onNotificationsTap: onNotificationsTap,
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _QuickAccessCard(
-                    icon: Icons.notifications_active_outlined,
-                    label: 'Reminders',
-                    subtitle: 'Bills & alerts',
-                    color: _navy,
-                    onTap: () {
-                      HapticFeedback.lightImpact();
-                      onReminders();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _QuickAccessCard(
-                    icon: Icons.grid_view_rounded,
-                    label: 'Categories',
-                    subtitle: 'Track spending',
-                    color: _navyLight,
-                    onTap: () {
-                      HapticFeedback.lightImpact();
-                      onCategories();
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ],
+                var total = analytics.totalAmount;
+                if (total <= 0 && expenseState is ExpenseLoaded) {
+                  total = expenseState.totalExpenses;
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Hi, $firstName 👋',
+                                style: GoogleFonts.inter(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF0F172A),
+                                  letterSpacing: -0.5,
+                                  height: 1.1,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _greetingSubtitle(),
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: const Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        _NotificationButton(
+                          unreadCount: widget.unreadCount,
+                          onTap: widget.onNotificationsTap,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _BalanceCard(
+                      total: total,
+                      hidden: _hideBalance,
+                      onToggleVisibility: () {
+                        setState(() => _hideBalance = !_hideBalance);
+                      },
+                      onCategories: widget.onCategories,
+                      onReminders: widget.onReminders,
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         );
       },
     );
   }
 }
 
-class _GreetingCard extends StatelessWidget {
-  final String firstName;
-  final int unreadCount;
-  final VoidCallback onNotificationsTap;
+class _BalanceCard extends StatelessWidget {
+  final double total;
+  final bool hidden;
+  final VoidCallback onToggleVisibility;
+  final VoidCallback onCategories;
+  final VoidCallback onReminders;
 
-  const _GreetingCard({
-    required this.firstName,
-    required this.unreadCount,
-    required this.onNotificationsTap,
+  const _BalanceCard({
+    required this.total,
+    required this.hidden,
+    required this.onToggleVisibility,
+    required this.onCategories,
+    required this.onReminders,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8EDF5)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [HomeDashboardHeader._navy, HomeDashboardHeader._navyDark],
+        ),
+        borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: HomeDashboardHeader._navy.withValues(alpha: 0.06),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
+            color: HomeDashboardHeader._navy.withValues(alpha: 0.35),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -109,70 +158,104 @@ class _GreetingCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: HomeDashboardHeader._navy.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  'DASHBOARD',
-                  style: GoogleFonts.inter(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    color: HomeDashboardHeader._navy,
-                    letterSpacing: 1.2,
-                  ),
+              Text(
+                'Total Spending',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withValues(alpha: 0.8),
                 ),
               ),
               const Spacer(),
-              _NotificationButton(
-                unreadCount: unreadCount,
-                onTap: onNotificationsTap,
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  onToggleVisibility();
+                },
+                child: Icon(
+                  hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  color: Colors.white.withValues(alpha: 0.85),
+                  size: 20,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Hi, $firstName 👋',
-            style: GoogleFonts.inter(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF0F172A),
-              letterSpacing: -0.5,
-              height: 1.1,
-            ),
-          ),
           const SizedBox(height: 6),
           Text(
-            'Smart spending leads to bright savings',
+            hidden ? '••••••' : _formatAmount(total),
             style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: const Color(0xFF64748B),
-              height: 1.35,
+              fontSize: 32,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: -1,
+              height: 1,
             ),
+          ),
+          if (!hidden) ...[
+            const SizedBox(height: 2),
+            Text(
+              'EGP',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.white.withValues(alpha: 0.75),
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _BalanceShortcut(
+                  icon: Icons.pie_chart_outline_rounded,
+                  label: 'Categories',
+                  subtitle: 'Track spending',
+                  onTap: onCategories,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _BalanceShortcut(
+                  icon: Icons.notifications_active_rounded,
+                  label: 'Reminders',
+                  subtitle: 'Bills & alerts',
+                  onTap: onReminders,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  String _formatAmount(double v) {
+    final s = v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2);
+    final parts = s.split('.');
+    final intPart = parts[0];
+    final buf = StringBuffer();
+    for (var i = 0; i < intPart.length; i++) {
+      if (i > 0 && (intPart.length - i) % 3 == 0) buf.write(',');
+      buf.write(intPart[i]);
+    }
+    if (parts.length > 1 && parts[1] != '0' && parts[1] != '00') {
+      return '$buf.${parts[1]}';
+    }
+    return buf.toString();
+  }
 }
 
-class _QuickAccessCard extends StatelessWidget {
+class _BalanceShortcut extends StatelessWidget {
   final IconData icon;
   final String label;
   final String subtitle;
-  final Color color;
   final VoidCallback onTap;
 
-  const _QuickAccessCard({
+  const _BalanceShortcut({
     required this.icon,
     required this.label,
     required this.subtitle,
-    required this.color,
     required this.onTap,
   });
 
@@ -181,62 +264,66 @@ class _QuickAccessCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: () {
+          HapticFeedback.lightImpact();
+          onTap();
+        },
         borderRadius: BorderRadius.circular(18),
         child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Colors.white.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFE8EDF5)),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon, color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: GoogleFonts.inter(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.inter(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.72),
+                        height: 1.1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white.withValues(alpha: 0.9),
+                size: 18,
               ),
             ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        color.withValues(alpha: 0.15),
-                        color.withValues(alpha: 0.08),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, color: color, size: 22),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  label,
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: const Color(0xFF94A3B8),
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       ),
@@ -248,10 +335,7 @@ class _NotificationButton extends StatelessWidget {
   final int unreadCount;
   final VoidCallback onTap;
 
-  const _NotificationButton({
-    required this.unreadCount,
-    required this.onTap,
-  });
+  const _NotificationButton({required this.unreadCount, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -261,28 +345,24 @@ class _NotificationButton extends StatelessWidget {
         onTap();
       },
       child: Container(
-        width: 42,
-        height: 42,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFE2E8F0)),
         ),
         child: Stack(
           alignment: Alignment.center,
           children: [
-            const Icon(
-              Icons.notifications_none_rounded,
-              color: HomeDashboardHeader._navy,
-              size: 21,
-            ),
+            const Icon(Icons.notifications_none_rounded, color: Color(0xFF0F172A), size: 20),
             if (unreadCount > 0)
               Positioned(
-                top: 7,
-                right: 7,
+                top: 8,
+                right: 8,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  width: 7,
+                  height: 7,
                   decoration: const BoxDecoration(
                     color: Color(0xFFEF4444),
                     shape: BoxShape.circle,

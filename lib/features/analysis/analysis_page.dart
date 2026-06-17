@@ -1,13 +1,16 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../core/theme/app_colors.dart';
-import '../home/widgets/simple_bottom_nav.dart';
-import '../profile/profile_page.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../../core/models/expense.dart';
+import '../../widgets/app_date_picker.dart';
+import '../../widgets/chart_placeholder.dart';
+import '../../widgets/spending_line_chart.dart';
+import '../home/bloc/analytics_bloc.dart';
+import '../home/bloc/analytics_state.dart';
 import '../home/bloc/expense_bloc.dart';
 import '../home/bloc/expense_state.dart';
 
-/// Analysis Page - عرض تحليل المصروفات
-/// يعرض إجمالي المصروفات والتحليل الأسبوعي والتقسيم حسب الفئات
 class AnalysisPage extends StatefulWidget {
   const AnalysisPage({super.key});
 
@@ -16,700 +19,744 @@ class AnalysisPage extends StatefulWidget {
 }
 
 class _AnalysisPageState extends State<AnalysisPage> {
+  static const _navy = Color(0xFF0D5DB8);
+  static const _bg = Color(0xFFF0F4FA);
+  static const _border = Color(0xFFE8EDF5);
+  static const _text = Color(0xFF0F172A);
+  static const _muted = Color(0xFF64748B);
+
   DateTime? _fromDate;
   DateTime? _toDate;
-  int _selectedIndex = 2; // Analysis page is index 2
+  String? _selectedDayKey;
+  _PeriodPreset _preset = _PeriodPreset.all;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<AnalyticsBloc>().refresh();
+    });
+  }
+
+  void _applyPreset(_PeriodPreset preset) {
+    HapticFeedback.selectionClick();
+    final now = DateTime.now();
+    final today = dateOnly(now);
+
+    setState(() {
+      _preset = preset;
+      switch (preset) {
+        case _PeriodPreset.week:
+          _fromDate = today.subtract(const Duration(days: 6));
+          _toDate = today;
+        case _PeriodPreset.month:
+          _fromDate = today.subtract(const Duration(days: 29));
+          _toDate = today;
+        case _PeriodPreset.quarter:
+          _fromDate = today.subtract(const Duration(days: 89));
+          _toDate = today;
+        case _PeriodPreset.all:
+          _fromDate = null;
+          _toDate = null;
+        case _PeriodPreset.custom:
+          break;
+      }
+      _selectedDayKey = null;
+    });
+  }
+
+  Future<void> _pickFromDate() async {
+    final now = DateTime.now();
+    final picked = await showAppDatePicker(
+      context: context,
+      initialDate: _fromDate ?? now.subtract(const Duration(days: 30)),
+      firstDate: DateTime(2020),
+      lastDate: _toDate ?? now,
+      title: 'From date',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _fromDate = dateOnly(picked);
+      _preset = _PeriodPreset.custom;
+      _selectedDayKey = null;
+      if (_toDate != null && _fromDate!.isAfter(_toDate!)) {
+        _toDate = _fromDate;
+      }
+    });
+  }
+
+  Future<void> _pickToDate() async {
+    final now = DateTime.now();
+    final picked = await showAppDatePicker(
+      context: context,
+      initialDate: _toDate ?? now,
+      firstDate: _fromDate ?? DateTime(2020),
+      lastDate: now,
+      title: 'To date',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _toDate = dateOnly(picked);
+      _preset = _PeriodPreset.custom;
+      _selectedDayKey = null;
+    });
+  }
+
+  Map<String, double> _analyticsFromExpenses(List<Expense> expenses) {
+    final result = <String, double>{};
+    for (final e in expenses) {
+      if (!_inRange(e.date)) continue;
+      final key =
+          '${e.date.year}-${e.date.month.toString().padLeft(2, '0')}-${e.date.day.toString().padLeft(2, '0')}';
+      result[key] = (result[key] ?? 0) + e.amount;
+    }
+    return result;
+  }
+
+  bool _inRange(DateTime date) {
+    final d = dateOnly(date);
+    if (_fromDate != null && d.isBefore(_fromDate!)) return false;
+    if (_toDate != null && d.isAfter(_toDate!)) return false;
+    return true;
+  }
+
+  double _rangeTotal(List<Expense> expenses) {
+    return expenses
+        .where((e) => _inRange(e.date))
+        .fold(0.0, (sum, e) => sum + e.amount);
+  }
+
+  double _todayTotal(List<Expense> expenses) {
+    final today = dateOnly(DateTime.now());
+    return expenses
+        .where((e) => dateOnly(e.date) == today)
+        .fold(0.0, (sum, e) => sum + e.amount);
+  }
+
+  String _topCategory(List<Expense> expenses) {
+    final totals = <String, double>{};
+    for (final e in expenses) {
+      if (!_inRange(e.date)) continue;
+      final cat = e.category.trim().isEmpty ? 'Other' : e.category.trim();
+      totals[cat] = (totals[cat] ?? 0) + e.amount;
+    }
+    if (totals.isEmpty) return '—';
+    return totals.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+
+  int _transactionCount(List<Expense> expenses) {
+    return expenses.where((e) => _inRange(e.date)).length;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8F8),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Chart icon with arrow (like in the image)
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E3A5F), // Navy blue to match logo
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.trending_up_rounded,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              'Analysis',
-              style: TextStyle(
-                color: Colors.black,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        centerTitle: true,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0814F9), Color(0xFFF509D6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                shape: BoxShape.circle,
-              ),
-              padding: const EdgeInsets.all(6),
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.notifications,
-                  color: Color(0xFFFFC107),
-                  size: 22,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
+      backgroundColor: _bg,
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Date Range Selector
-            Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _selectFromDate(context),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.calendar_today,
-                            color: Color(0xFF1976D2),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'From',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              Text(
-                                _fromDate != null
-                                    ? '${_fromDate!.day}/${_fromDate!.month}/${_fromDate!.year}'
-                                    : 'Select Date',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _selectToDate(context),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.calendar_today,
-                            color: Color(0xFF1976D2),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'To',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              Text(
-                                _toDate != null
-                                    ? '${_toDate!.day}/${_toDate!.month}/${_toDate!.year}'
-                                    : 'Select Date',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            _buildHeader(),
+            Expanded(
+              child: BlocBuilder<AnalyticsBloc, AnalyticsState>(
+                builder: (context, analyticsState) {
+                  return BlocBuilder<ExpenseBloc, ExpenseState>(
+                    builder: (context, expenseState) {
+                      final expenses = expenseState is ExpenseLoaded
+                          ? expenseState.expenses
+                          : <Expense>[];
 
-            const SizedBox(height: 24),
+                      final hasLocal = expenses.isNotEmpty;
+                      final hasAnalytics = analyticsState.hasData &&
+                          analyticsState.analysisOverTime.isNotEmpty;
 
-            // Chart Container
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Your Spending This Week',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF1D86D0), Color(0xFF0F446A)],
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.refresh,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF1D86D0), Color(0xFF0F446A)],
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.calendar_view_week,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  BlocBuilder<ExpenseBloc, ExpenseState>(
-                    builder: (context, state) {
-                      // Calculate dynamic weekly data from expenses
-                      Map<String, double> weeklyData = {
-                        'Mon': 0,
-                        'Tue': 0,
-                        'Wed': 0,
-                        'Thu': 0,
-                        'Fri': 0,
-                        'Sat': 0,
-                        'Sun': 0,
-                      };
-
-                      if (state is ExpenseLoaded) {
-                        final now = DateTime.now();
-                        final weekStart = now.subtract(
-                          Duration(days: now.weekday - 1),
-                        );
-
-                        for (var expense in state.expenses) {
-                          final daysDiff = expense.date
-                              .difference(weekStart)
-                              .inDays;
-                          if (daysDiff >= 0 && daysDiff < 7) {
-                            final dayNames = [
-                              'Mon',
-                              'Tue',
-                              'Wed',
-                              'Thu',
-                              'Fri',
-                              'Sat',
-                              'Sun',
-                            ];
-                            if (daysDiff < dayNames.length) {
-                              weeklyData[dayNames[daysDiff]] =
-                                  (weeklyData[dayNames[daysDiff]] ?? 0) +
-                                  expense.amount;
-                            }
-                          }
-                        }
-                      }
-
-                      // Show empty chart when no real data exists
-                      if (weeklyData.values.every((v) => v == 0)) {
-                        return SizedBox(
-                          height: 280,
-                          child: Center(
-                            child: Text(
-                              'No spending data this week',
-                              style: GoogleFonts.inter(
-                                color: const Color(0xFF94A3B8),
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
+                      Map<String, double> chartSource;
+                      if (hasLocal) {
+                        chartSource = _analyticsFromExpenses(expenses);
+                      } else {
+                        chartSource = Map<String, double>.from(
+                          analyticsState.analysisOverTime,
                         );
                       }
 
-                      // Find max value for scaling
-                      final maxValue = weeklyData.values.fold<double>(
-                        0,
-                        (max, value) => value > max ? value : max,
-                      );
-                      final chartMax = maxValue > 0
-                          ? (maxValue * 1.2).ceilToDouble()
-                          : 1000;
+                      final rangeTotal = hasLocal
+                          ? _rangeTotal(expenses)
+                          : chartSource.values.fold(0.0, (a, b) => a + b);
+                      final todayTotal =
+                          hasLocal ? _todayTotal(expenses) : 0.0;
+                      final topCategory =
+                          hasLocal ? _topCategory(expenses) : '—';
+                      final txCount =
+                          hasLocal ? _transactionCount(expenses) : 0;
 
-                      // Calculate grid intervals
-                      final interval = (chartMax / 4).ceilToDouble();
-                      final gridValues = List.generate(
-                        5,
-                        (i) => interval * (4 - i),
-                      );
-
-                      return SizedBox(
-                        height: 280,
-                        child: Stack(
+                      return RefreshIndicator(
+                        color: _navy,
+                        onRefresh: () async {
+                          context.read<ExpenseBloc>().refreshExpenses();
+                          await context.read<AnalyticsBloc>().refresh(
+                                from: _fromDate,
+                                to: _toDate,
+                              );
+                        },
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                           children: [
-                            // Grid lines and labels
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 0,
-                              bottom: 30,
-                              child: Column(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: gridValues.map((value) {
-                                  final isLast = value == gridValues.last;
-                                  return _buildGridLine(
-                                    value >= 1000
-                                        ? '${(value / 1000).toStringAsFixed(0)}k'
-                                        : value.toInt().toString(),
-                                    isLast,
-                                  );
-                                }).toList(),
-                              ),
+                            _buildPeriodChips(),
+                            const SizedBox(height: 12),
+                            _buildDateRow(),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _StatCard(
+                                    label: 'Period total',
+                                    value:
+                                        '${rangeTotal.toStringAsFixed(0)} EGP',
+                                    icon: Icons.payments_outlined,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _StatCard(
+                                    label: 'Today',
+                                    value:
+                                        '${todayTotal.toStringAsFixed(0)} EGP',
+                                    icon: Icons.today_outlined,
+                                  ),
+                                ),
+                              ],
                             ),
-                            // Bars
-                            Positioned(
-                              left: 40,
-                              right: 0,
-                              top: 0,
-                              bottom: 30,
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: weeklyData.entries.map((entry) {
-                                  final greenHeight = chartMax > 0
-                                      ? (entry.value / chartMax * 220)
-                                            .toDouble()
-                                      : 5.0;
-                                  final blueHeight = chartMax > 0
-                                      ? (entry.value * 0.7 / chartMax * 220)
-                                            .toDouble()
-                                      : 3.0;
-                                  return _buildDualBarOnly(
-                                    greenHeight,
-                                    blueHeight,
-                                  );
-                                }).toList(),
-                              ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _StatCard(
+                                    label: 'Top category',
+                                    value: topCategory,
+                                    icon: Icons.category_outlined,
+                                    valueFontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _StatCard(
+                                    label: 'Transactions',
+                                    value: '$txCount',
+                                    icon: Icons.receipt_long_outlined,
+                                  ),
+                                ),
+                              ],
                             ),
-                            // Day labels on X-axis
-                            Positioned(
-                              left: 40,
-                              right: 0,
-                              bottom: 0,
-                              height: 25,
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: weeklyData.keys.map((day) {
-                                  return Text(
-                                    day,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.grey,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
+                            const SizedBox(height: 16),
+                            _buildChartCard(
+                              chartSource: chartSource,
+                              rangeTotal: rangeTotal,
+                              hasData: hasLocal || hasAnalytics,
+                              expenses: expenses,
+                              analyticsState: analyticsState,
                             ),
                           ],
                         ),
                       );
                     },
-                  ),
-                ],
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 40),
-
-            // Summary Cards
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: BlocBuilder<ExpenseBloc, ExpenseState>(
-                      builder: (context, state) {
-                        double todayTotal = 0;
-                        if (state is ExpenseLoaded) {
-                          // Calculate today's total
-                          final today = DateTime.now();
-                          todayTotal = state.expenses
-                              .where((expense) {
-                                return expense.date.year == today.year &&
-                                    expense.date.month == today.month &&
-                                    expense.date.day == today.day;
-                              })
-                              .fold(
-                                0.0,
-                                (sum, expense) => sum + expense.amount,
-                              );
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Today's Spending",
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'EGP ${todayTotal.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: BlocBuilder<ExpenseBloc, ExpenseState>(
-                      builder: (context, state) {
-                        String highestCategory = 'N/A';
-                        if (state is ExpenseLoaded) {
-                          // Calculate totals for each category
-                          final categories = [
-                            'Shopping',
-                            'Bills',
-                            'Health',
-                            'Food & Drink',
-                          ];
-                          double maxTotal = 0;
-                          for (final category in categories) {
-                            final total = state.getCategoryTotal(category);
-                            if (total > maxTotal) {
-                              maxTotal = total;
-                              highestCategory = category;
-                            }
-                          }
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Highest Category',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              highestCategory,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
             ),
           ],
         ),
       ),
-      bottomNavigationBar: SimpleBottomNav(
-        selectedIndex: _selectedIndex,
-        onItemSelected: _onNavItemTapped,
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 16, 4),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _border),
+              ),
+              child: const Icon(Icons.arrow_back_rounded, size: 20, color: _text),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _navy.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'INSIGHTS',
+                    style: GoogleFonts.inter(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: _navy,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Analysis',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: _text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
       ),
     );
   }
 
-  void _onNavItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-
-    switch (index) {
-      case 0:
-        // Go to Home
-        Navigator.pop(context);
-        break;
-      case 1:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Offers - Coming soon!'),
-            backgroundColor: AppColors.primary,
-          ),
-        );
-        // Reset selection back to analysis
-        setState(() {
-          _selectedIndex = 2;
-        });
-        break;
-      case 2:
-        // Already on Analysis - just update selection
-        setState(() {
-          _selectedIndex = 2;
-        });
-        break;
-      case 3:
-        // Go to Profile
-        final expenseBloc = context.read<ExpenseBloc>();
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => BlocProvider.value(
-              value: expenseBloc,
-              child: const ProfilePage(),
-            ),
-          ),
-        );
-        break;
-    }
-  }
-
-  void _selectFromDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _fromDate = picked;
-      });
-    }
-  }
-
-  void _selectToDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _toDate = picked;
-      });
-    }
-  }
-
-  Widget _buildDualBarOnly(double greenHeight, double blueHeight) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Green Bar
-        Container(
-          width: 14,
-          height: greenHeight,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1976D2),
-            borderRadius: BorderRadius.circular(7),
-          ),
-        ),
-        const SizedBox(width: 4),
-        // Blue Bar
-        Container(
-          width: 14,
-          height: blueHeight,
-          decoration: BoxDecoration(
-            color: const Color(0xFFE91E63),
-            borderRadius: BorderRadius.circular(7),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGridLine(String label, bool isDarkLine) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 35,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey[400],
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-        ),
-        Expanded(
-          child: isDarkLine
-              ? Container(height: 2, color: Colors.grey[800])
-              : CustomPaint(
-                  painter: DashedLinePainter(),
-                  child: Container(height: 1),
+  Widget _buildPeriodChips() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _PeriodPreset.week,
+          _PeriodPreset.month,
+          _PeriodPreset.quarter,
+          _PeriodPreset.all,
+        ].map((preset) {
+          final selected = _preset == preset;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () => _applyPreset(preset),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: selected ? _navy : Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: selected ? _navy : _border,
+                  ),
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: _navy.withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : null,
                 ),
-        ),
+                child: Text(
+                  preset.label,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : _muted,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildDateRow() {
+    return Row(
+      children: [
+        Expanded(child: _DateTile(label: 'From', date: _fromDate, onTap: _pickFromDate)),
+        const SizedBox(width: 10),
+        Expanded(child: _DateTile(label: 'To', date: _toDate, onTap: _pickToDate)),
       ],
+    );
+  }
+
+  Widget _buildChartCard({
+    required Map<String, double> chartSource,
+    required double rangeTotal,
+    required bool hasData,
+    required List<Expense> expenses,
+    required AnalyticsState analyticsState,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+        boxShadow: [
+          BoxShadow(
+            color: _navy.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Spending graph',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: _text,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${rangeTotal.toStringAsFixed(0)} EGP in selected period',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  context.read<ExpenseBloc>().refreshExpenses();
+                  context.read<AnalyticsBloc>().refresh(
+                        from: _fromDate,
+                        to: _toDate,
+                      );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _navy.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.refresh_rounded, size: 18, color: _navy),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (!hasData || chartSource.isEmpty)
+            const ChartPlaceholder(
+              title: 'Spending chart',
+              height: 245,
+              type: ChartPlaceholderType.line,
+            )
+          else
+            SizedBox(
+              height: 245,
+              child: SpendingLineChart(
+                analyticsData: chartSource,
+                fromDate: _fromDate,
+                toDate: _toDate,
+                onDayTapped: (dateKey) {
+                  setState(() {
+                    _selectedDayKey = dateKey.isEmpty ? null : dateKey;
+                  });
+                },
+              ),
+            ),
+          if (_selectedDayKey != null)
+            _DayDetailCard(
+              dateKey: _selectedDayKey!,
+              expenses: expenses,
+              onClose: () => setState(() => _selectedDayKey = null),
+            ),
+        ],
+      ),
     );
   }
 }
 
-class DashedLinePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey[300]!
-      ..strokeWidth = 1;
+enum _PeriodPreset { week, month, quarter, all, custom }
 
-    const dashWidth = 5.0;
-    const dashSpace = 3.0;
-    double startX = 0;
-
-    while (startX < size.width) {
-      canvas.drawLine(Offset(startX, 0), Offset(startX + dashWidth, 0), paint);
-      startX += dashWidth + dashSpace;
-    }
-  }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
+extension on _PeriodPreset {
+  String get label => switch (this) {
+        _PeriodPreset.week => '7 days',
+        _PeriodPreset.month => '30 days',
+        _PeriodPreset.quarter => '90 days',
+        _PeriodPreset.all => 'All time',
+        _PeriodPreset.custom => 'Custom',
+      };
 }
 
+class _DateTile extends StatelessWidget {
+  final String label;
+  final DateTime? date;
+  final VoidCallback onTap;
 
+  const _DateTile({
+    required this.label,
+    required this.date,
+    required this.onTap,
+  });
+
+  static const _navy = Color(0xFF0D5DB8);
+  static const _border = Color(0xFFE8EDF5);
+  static const _text = Color(0xFF0F172A);
+  static const _muted = Color(0xFF64748B);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _border),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _navy.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.calendar_today_rounded, size: 16, color: _navy),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _muted,
+                    ),
+                  ),
+                  Text(
+                    formatDisplayDate(date),
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _text,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, size: 18, color: _muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final double valueFontSize;
+
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.valueFontSize = 18,
+  });
+
+  static const _navy = Color(0xFF0D5DB8);
+  static const _border = Color(0xFFE8EDF5);
+  static const _text = Color(0xFF0F172A);
+  static const _muted = Color(0xFF64748B);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _border),
+        boxShadow: [
+          BoxShadow(
+            color: _navy.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: _navy),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _muted,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: valueFontSize,
+              fontWeight: FontWeight.w800,
+              color: _text,
+              letterSpacing: -0.3,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayDetailCard extends StatelessWidget {
+  final String dateKey;
+  final List<Expense> expenses;
+  final VoidCallback onClose;
+
+  const _DayDetailCard({
+    required this.dateKey,
+    required this.expenses,
+    required this.onClose,
+  });
+
+  static const _navy = Color(0xFF0D5DB8);
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = dateKey.split('-');
+    var dateLabel = dateKey;
+    if (parts.length == 3) {
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      final m = int.tryParse(parts[1]) ?? 1;
+      dateLabel =
+          '${months[(m - 1).clamp(0, 11)]} ${int.parse(parts[2])}, ${parts[0]}';
+    }
+
+    final byCategory = <String, double>{};
+    var dayTotal = 0.0;
+    for (final e in expenses) {
+      final key =
+          '${e.date.year}-${e.date.month.toString().padLeft(2, '0')}-${e.date.day.toString().padLeft(2, '0')}';
+      if (key != dateKey) continue;
+      dayTotal += e.amount;
+      final cat = e.category.trim().isEmpty ? 'Other' : e.category.trim();
+      byCategory[cat] = (byCategory[cat] ?? 0) + e.amount;
+    }
+    final sorted = byCategory.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _navy.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _navy.withValues(alpha: 0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_rounded, size: 14, color: _navy),
+              const SizedBox(width: 6),
+              Text(
+                dateLabel,
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _navy,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${dayTotal.toStringAsFixed(0)} EGP',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _navy,
+                ),
+              ),
+              GestureDetector(
+                onTap: onClose,
+                child: const Padding(
+                  padding: EdgeInsets.only(left: 4),
+                  child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF9CA3AF)),
+                ),
+              ),
+            ],
+          ),
+          if (sorted.isNotEmpty)
+            ...sorted.take(4).map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            e.key,
+                            style: GoogleFonts.inter(fontSize: 12),
+                          ),
+                        ),
+                        Text(
+                          '${e.value.toStringAsFixed(0)} EGP',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}

@@ -41,4 +41,8 @@ const schema = new mongoose.Schema(
 schema.index({ user: 1, createdAt: -1 });
 schema.index({ user: 1, isRead: 1 });
 
+schema.statics.findForUser = function (userId, limit = 50) {
+  return this.find({ user: userId }).sort({ createdAt: -1 }).limit(limit);
+};
+
 export const Notification = mongoose.model("Notification", schema);

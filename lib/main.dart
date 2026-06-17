@@ -5,10 +5,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'core/routes/app_routes.dart';
 import 'core/theme/app_colors.dart';
 import 'core/services/auth_api_service.dart';
-import 'core/services/auth_gate.dart';
 import 'core/network/dio_client.dart';
 import 'core/services/sync_service.dart';
-import 'core/database/app_database.dart';
 import 'core/services/websocket_service.dart';
 import 'services/notification_service.dart';
 import 'features/splash/presentation/pages/splash_page.dart';
@@ -60,11 +58,7 @@ Future<void> _initializeApp() async {
     await DioClient().initialize();
     print('✅ Network initialized');
 
-    // 3. Database singleton — just access it to ensure it's created once
-    AppDatabase.instance;
-    print('✅ Database initialized');
-
-    // 4. Sync service — runs after auth is ready
+    // 3. Sync service — runs after auth is ready
     await SyncService().initialize();
     print('✅ Sync service initialized');
 

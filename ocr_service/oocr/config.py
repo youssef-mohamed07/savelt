@@ -18,6 +18,9 @@ Rules:
 - For each line item, return name and any of quantity/unit_price/total_price that are printed on that row. Use null for the rest.
 - Read Arabic right-to-left as printed; preserve original digits (Arabic-Indic ٠١٢٣ or Western 0123) — do not transliterate.
 - Pick exactly ONE category from the allowed list below. NEVER use a category not in the list — if the items don't clearly match anything, use "other". Match by item examples: if an item resembles one of the examples shown for a category, use that category.
+- store_name_raw: the merchant/business name at the receipt header (top of receipt). Copy verbatim.
+- place_raw: branch, city, street, mall, or address line if printed. Null if absent.
+- details_raw: receipt/invoice number, payment method (cash/card/visa), cashier name, tax registration, phone — copy verbatim; join multiple values with " · ".
 
 {CATEGORY_GUIDE}
 
@@ -38,6 +41,9 @@ Output:
 {
   "date_raw": "٠٥/١٢/٢٠٢٤",
   "time_raw": "١٤:٣٠",
+  "store_name_raw": "مطعم الشام",
+  "place_raw": null,
+  "details_raw": null,
   "total_raw": "١٠٥٫٠٠ ج.م",
   "category": "restaurant",
   "items": [
@@ -58,6 +64,9 @@ Output:
 {
   "date_raw": "12/05/2024",
   "time_raw": "10:15 AM",
+  "store_name_raw": "City Pharmacy",
+  "place_raw": "Downtown Branch",
+  "details_raw": "Receipt #4521 · Visa",
   "total_raw": "$19.99",
   "category": "pharmacy",
   "items": [

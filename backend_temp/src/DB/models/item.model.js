@@ -38,9 +38,13 @@ const schema = new mongoose.Schema(
   }
 );
 
-// Index for searching items
 schema.index({ user: 1, name: 1 });
-schema.index({ name: 'text' });
+schema.index({ user: 1, category: 1 });
+schema.index({ name: "text" });
+
+schema.statics.findActiveForUser = function (userId) {
+  return this.find({ user: userId, isActive: { $ne: false } });
+};
 
 // Create and export the Item model
 export const Item = mongoose.model("Item", schema);

@@ -6,11 +6,110 @@ import 'dart:math' as math;
 import '../home/bloc/expense_bloc.dart';
 import '../home/bloc/expense_state.dart';
 import '../items/items_page.dart';
+import 'category_analysis_page.dart';
 import '../../widgets/chart_placeholder.dart';
 import '../../widgets/dialogs/add_category_dialog.dart';
 import 'bloc/category_bloc.dart';
 import 'widgets/category_list_tile.dart';
 import 'widgets/category_ui_helpers.dart';
+
+class _CategorySpendRow {
+  final String name;
+  final double amount;
+  final Map<String, dynamic> meta;
+  final int chartColorIndex;
+
+  const _CategorySpendRow({
+    required this.name,
+    required this.amount,
+    required this.meta,
+    required this.chartColorIndex,
+  });
+}
+
+/// Single source of truth for category totals (case-insensitive grouping).
+({
+  List<_CategorySpendRow> rows,
+  List<MapEntry<String, double>> chartEntries,
+  double total,
+  int activeCount,
+}) _computeSpendingBreakdown(
+  List<Map<String, dynamic>> apiCategories,
+  List<dynamic> expenses,
+) {
+  final metaByKey = <String, Map<String, dynamic>>{};
+
+  for (final category in apiCategories) {
+    final name = (category['name'] as String).trim();
+    if (name.isEmpty) continue;
+    metaByKey[name.toLowerCase()] = category;
+  }
+
+  final amounts = <String, double>{};
+
+  for (final expense in expenses) {
+    final raw = (expense.category as String?)?.trim();
+    if (raw == null || raw.isEmpty) continue;
+    final key = raw.toLowerCase();
+    amounts[key] = (amounts[key] ?? 0) + expense.amount;
+    metaByKey.putIfAbsent(
+      key,
+      () => {
+        'name': raw,
+        'icon': Icons.category_rounded,
+        'isDefault': false,
+      },
+    );
+  }
+
+  for (final category in apiCategories) {
+    final name = (category['name'] as String).trim();
+    if (name.isEmpty) continue;
+    final key = name.toLowerCase();
+    metaByKey[key] = category;
+    amounts.putIfAbsent(key, () => 0);
+  }
+
+  final spendingKeys = amounts.entries
+      .where((e) => e.value > 0)
+      .map((e) => e.key)
+      .toList()
+    ..sort((a, b) => amounts[b]!.compareTo(amounts[a]!));
+
+  final colorByKey = <String, int>{
+    for (var i = 0; i < spendingKeys.length; i++) spendingKeys[i]: i,
+  };
+
+  final rows = metaByKey.entries.map((entry) {
+    final amount = amounts[entry.key] ?? 0;
+    return _CategorySpendRow(
+      name: entry.value['name'] as String,
+      amount: amount,
+      meta: entry.value,
+      chartColorIndex: colorByKey[entry.key] ?? -1,
+    );
+  }).toList()
+    ..sort((a, b) => b.amount.compareTo(a.amount));
+
+  final chartEntries = spendingKeys
+      .map((key) => MapEntry(metaByKey[key]!['name'] as String, amounts[key]!))
+      .toList();
+
+  final total = amounts.values.fold(0.0, (sum, value) => sum + value);
+  final activeCount = amounts.values.where((value) => value > 0).length;
+
+  return (
+    rows: rows,
+    chartEntries: chartEntries,
+    total: total,
+    activeCount: activeCount,
+  );
+}
+
+bool _categoryMatches(String expenseCategory, String categoryName) {
+  return expenseCategory.trim().toLowerCase() ==
+      categoryName.trim().toLowerCase();
+}
 
 /// Categories Page - عرض الفئات مع Pie Chart
 /// يعرض pie chart ديناميك وقائمة الفئات
@@ -72,33 +171,6 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
       }
       return true;
     }).toList();
-  }
-
-  List<Map<String, dynamic>> _buildCategoryList(
-    List<Map<String, dynamic>> apiCategories,
-    List<dynamic> expenses,
-  ) {
-    final byName = <String, Map<String, dynamic>>{};
-
-    for (final category in apiCategories) {
-      final name = category['name'] as String;
-      byName[name.toLowerCase()] = category;
-    }
-
-    for (final expense in expenses) {
-      final name = expense.category as String?;
-      if (name == null || name.trim().isEmpty) continue;
-      final key = name.toLowerCase();
-      if (!byName.containsKey(key)) {
-        byName[key] = {
-          'name': name,
-          'icon': Icons.category_rounded,
-          'isDefault': false,
-        };
-      }
-    }
-
-    return byName.values.toList();
   }
 
   @override
@@ -202,13 +274,13 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
         var total = 0.0;
         var activeCount = 0;
         if (state is ExpenseLoaded && state.hasData) {
-          final filtered = _filterByDate(state.expenses);
-          final totals = <String, double>{};
-          for (final e in filtered) {
-            totals[e.category] = (totals[e.category] ?? 0) + e.amount;
-          }
-          total = totals.values.fold(0.0, (a, b) => a + b);
-          activeCount = totals.values.where((v) => v > 0).length;
+          final categoryState = context.read<CategoryBloc>().state;
+          final breakdown = _computeSpendingBreakdown(
+            categoryState.customCategories,
+            _filterByDate(state.expenses),
+          );
+          total = breakdown.total;
+          activeCount = breakdown.activeCount;
         }
         return Container(
           width: double.infinity,
@@ -415,10 +487,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
       builder: (context, categoryState) {
         return BlocBuilder<ExpenseBloc, ExpenseState>(
           builder: (context, state) {
-            final allCategories = _buildCategoryList(
-              categoryState.customCategories,
-              state is ExpenseLoaded ? state.expenses : const [],
-            );
+            final allCategories = categoryState.customCategories;
 
             if (state is ExpenseLoaded && state.isEmpty) {
               return const ChartPlaceholder(
@@ -428,23 +497,16 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
               );
             }
 
-            Map<String, double> categoryTotals = {};
+            List<MapEntry<String, double>> chartEntries = [];
             double totalAmount = 0;
 
             if (state is ExpenseLoaded && state.hasData) {
-              final filtered = _filterByDate(state.expenses);
-
-              for (var cat in allCategories) {
-                final name = cat['name'] as String;
-                final total = filtered
-                    .where((e) => e.category == name)
-                    .fold<double>(0, (sum, e) => sum + e.amount);
-                if (total > 0) {
-                  categoryTotals[name] = total;
-                }
-              }
-
-              totalAmount = categoryTotals.values.fold(0, (sum, a) => sum + a);
+              final breakdown = _computeSpendingBreakdown(
+                allCategories,
+                _filterByDate(state.expenses),
+              );
+              chartEntries = breakdown.chartEntries;
+              totalAmount = breakdown.total;
             }
 
             if (totalAmount == 0) {
@@ -480,7 +542,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
                     final tappedCategory = _getTappedCategory(
                       details.localPosition,
                       const Size(220, 220),
-                      categoryTotals,
+                      chartEntries,
                       totalAmount,
                     );
                     if (tappedCategory != null) {
@@ -496,7 +558,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
                       children: [
                         CustomPaint(
                           size: const Size(220, 220),
-                          painter: PieChartPainter(categoryTotals, totalAmount),
+                          painter: PieChartPainter(chartEntries, totalAmount),
                         ),
                         Column(
                           mainAxisSize: MainAxisSize.min,
@@ -523,7 +585,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ..._buildChartLegend(categoryTotals, totalAmount),
+                ..._buildChartLegend(chartEntries, totalAmount),
               ],
             );
           },
@@ -536,7 +598,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
   String? _getTappedCategory(
     Offset tapPosition,
     Size size,
-    Map<String, double> categoryTotals,
+    List<MapEntry<String, double>> chartEntries,
     double totalAmount,
   ) {
     final center = Offset(size.width / 2, size.height / 2);
@@ -557,7 +619,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
     
     // Find which segment was tapped
     double startAngle = 0;
-    for (final entry in categoryTotals.entries) {
+    for (final entry in chartEntries) {
       if (entry.value > 0) {
         final sweepAngle = (entry.value / totalAmount) * 2 * math.pi;
         if (tapAngle >= startAngle && tapAngle < startAngle + sweepAngle) {
@@ -573,7 +635,7 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
   Widget _buildItemsBreakdownChart(ExpenseLoaded state, String categoryName) {
     // Apply date filter then filter by category
     final filtered = _filterByDate(state.expenses)
-        .where((e) => e.category == categoryName)
+        .where((e) => _categoryMatches(e.category, categoryName))
         .toList();
 
     final Map<String, double> itemTotals = {};
@@ -748,12 +810,12 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
     return categoryChartColors[index % categoryChartColors.length];
   }
 
-  List<Widget> _buildChartLegend(Map<String, double> totals, double totalAmount) {
-    final sorted = totals.entries.where((e) => e.value > 0).toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    return sorted.take(6).map((entry) {
-      final i = sorted.indexOf(entry);
+  List<Widget> _buildChartLegend(
+    List<MapEntry<String, double>> entries,
+    double totalAmount,
+  ) {
+    return entries.take(6).map((entry) {
+      final i = entries.indexOf(entry);
       final pct = totalAmount > 0 ? ((entry.value / totalAmount) * 100).round() : 0;
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
@@ -775,18 +837,26 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            Text(
-              '$pct%',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF0D5DB8),
+            SizedBox(
+              width: 40,
+              child: Text(
+                '$pct%',
+                textAlign: TextAlign.end,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF0D5DB8),
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              '${entry.value.toStringAsFixed(0)} EGP',
-              style: GoogleFonts.inter(fontSize: 11.5, color: const Color(0xFF94A3B8)),
+            SizedBox(
+              width: 78,
+              child: Text(
+                '${entry.value.toStringAsFixed(0)} EGP',
+                textAlign: TextAlign.end,
+                style: GoogleFonts.inter(fontSize: 11.5, color: const Color(0xFF94A3B8)),
+              ),
             ),
           ],
         ),
@@ -799,46 +869,37 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
       builder: (context, categoryState) {
         return BlocBuilder<ExpenseBloc, ExpenseState>(
           builder: (context, state) {
-            final allCategories = _buildCategoryList(
+            final breakdown = _computeSpendingBreakdown(
               categoryState.customCategories,
-              state is ExpenseLoaded ? state.expenses : const [],
+              state is ExpenseLoaded
+                  ? _filterByDate(state.expenses)
+                  : const [],
             );
-
-            Map<String, double> categoryTotals = {};
-            if (state is ExpenseLoaded) {
-              final filtered = _filterByDate(state.expenses);
-              for (var cat in allCategories) {
-                final name = cat['name'] as String;
-                categoryTotals[name] = filtered
-                    .where((e) => e.category == name)
-                    .fold<double>(0, (sum, e) => sum + e.amount);
-              }
-            }
-
-            final grandTotal = categoryTotals.values.fold(0.0, (a, b) => a + b);
-
-            final sortedCategories = allCategories.toList()
-              ..sort((a, b) {
-                final am = categoryTotals[a['name']] ?? 0;
-                final bm = categoryTotals[b['name']] ?? 0;
-                return bm.compareTo(am);
-              });
+            final grandTotal = breakdown.total;
 
             return Column(
               children: [
-                ...sortedCategories.map((category) {
-                  final name = category['name'] as String;
-                  final amount = categoryTotals[name] ?? 0;
-                  final isDefault = category['isDefault'] as bool? ?? false;
+                ...breakdown.rows.map((row) {
+                  final name = row.name;
+                  final amount = row.amount;
+                  final isDefault = row.meta['isDefault'] as bool? ?? false;
                   final share = grandTotal > 0 ? amount / grandTotal : 0.0;
+                  final chartColor = row.chartColorIndex >= 0
+                      ? categoryChartColors[
+                          row.chartColorIndex % categoryChartColors.length]
+                      : null;
 
                   final tile = CategoryListTile(
                     name: name,
-                    icon: category['icon'] as IconData,
+                    icon: row.meta['icon'] as IconData,
                     amount: amount,
                     share: share,
                     isDefault: isDefault,
-                    onTap: () => _openCategoryItems(name, category['icon'] as IconData),
+                    accentColor: chartColor,
+                    onTap: () =>
+                        _openCategoryItems(name, row.meta['icon'] as IconData),
+                    onAnalysisTap:
+                        amount > 0 ? () => _openCategoryAnalysis(name) : null,
                     onDelete: isDefault ? null : () => _deleteCategory(name),
                   );
 
@@ -904,6 +965,25 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
     } catch (e) {
       debugPrint('⚠️ Error navigating to ItemsPage: $e');
     }
+  }
+
+  void _openCategoryAnalysis(String name) {
+    if (!mounted || !context.mounted) return;
+    HapticFeedback.lightImpact();
+    final style = categoryUiStyle(name);
+    final expenseBloc = context.read<ExpenseBloc>();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: expenseBloc,
+          child: CategoryAnalysisPage(
+            categoryName: name,
+            categoryGradient: [style.color, style.color.withValues(alpha: 0.65)],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildAddCategoryButton() {
@@ -1048,10 +1128,10 @@ class _CategoriesPageContentState extends State<_CategoriesPageContent> {
 }
 
 class PieChartPainter extends CustomPainter {
-  final Map<String, double> categoryTotals;
+  final List<MapEntry<String, double>> entries;
   final double totalAmount;
 
-  PieChartPainter(this.categoryTotals, this.totalAmount);
+  PieChartPainter(this.entries, this.totalAmount);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1061,28 +1141,27 @@ class PieChartPainter extends CustomPainter {
     final colors = categoryChartColors;
 
     double startAngle = -math.pi / 2;
-    int colorIndex = 0;
 
-    categoryTotals.forEach((category, amount) {
-      if (amount > 0) {
-        final sweepAngle = (amount / totalAmount) * 2 * math.pi;
+    for (var i = 0; i < entries.length; i++) {
+      final amount = entries[i].value;
+      if (amount <= 0) continue;
 
-        final paint = Paint()
-          ..color = colors[colorIndex % colors.length]
-          ..style = PaintingStyle.fill;
+      final sweepAngle = (amount / totalAmount) * 2 * math.pi;
 
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          startAngle,
-          sweepAngle,
-          true,
-          paint,
-        );
+      final paint = Paint()
+        ..color = colors[i % colors.length]
+        ..style = PaintingStyle.fill;
 
-        startAngle += sweepAngle;
-        colorIndex++;
-      }
-    });
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        startAngle,
+        sweepAngle,
+        true,
+        paint,
+      );
+
+      startAngle += sweepAngle;
+    }
 
     // Donut hole
     canvas.drawCircle(

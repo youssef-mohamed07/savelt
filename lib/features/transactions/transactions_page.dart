@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state.dart';
+import '../profile/widgets/export_sheet.dart';
 import 'bloc/transaction_bloc.dart';
 import 'bloc/transaction_event.dart';
 import 'bloc/transaction_state.dart';
@@ -78,7 +79,6 @@ class _TransactionsPageState extends State<TransactionsPage> {
               color: _navy,
               onRefresh: () async {
                 context.read<TransactionBloc>().add(const LoadTransactions());
-                await Future.delayed(const Duration(milliseconds: 400));
               },
               child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(
@@ -189,22 +189,29 @@ class _TransactionsPageState extends State<TransactionsPage> {
               ],
             ),
           ),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => showExportSheet(context),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-              boxShadow: [
-                BoxShadow(
-                  color: _navy.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _navy.withValues(alpha: 0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-              ],
+                child: const Icon(Icons.receipt_long_rounded, color: _navy, size: 22),
+              ),
             ),
-            child: const Icon(Icons.receipt_long_rounded, color: _navy, size: 22),
           ),
         ],
       ),

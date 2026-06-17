@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../../widgets/app_date_picker.dart';
 import '../../../widgets/chart_placeholder.dart';
 import '../../../widgets/spending_line_chart.dart';
+import '../../analysis/analysis_page.dart';
 import '../bloc/analytics_bloc.dart';
 import '../bloc/analytics_state.dart';
 import '../bloc/expense_bloc.dart';
 import '../bloc/expense_state.dart';
 
-/// Spending chart with date filter — extracted from home_page.
+/// Full spending analytics card for the home screen.
 class HomeSpendingOverview extends StatefulWidget {
   const HomeSpendingOverview({super.key});
 
@@ -20,18 +21,13 @@ class HomeSpendingOverview extends StatefulWidget {
 class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
   static const _navy = Color(0xFF0D5DB8);
 
-  DateTime? _fromDate;
-  DateTime? _toDate;
   String? _selectedDayKey;
-
-  bool get _hasDateFilter => _fromDate != null || _toDate != null;
 
   @override
   void initState() {
     super.initState();
-    // Ensure chart loads full history (not a single-day slice).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _hasDateFilter) return;
+      if (!mounted) return;
       context.read<AnalyticsBloc>().refresh();
     });
   }
@@ -49,18 +45,22 @@ class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
 
             if (!hasAnalytics && !hasLocalData) {
               return const ChartPlaceholder(
-                title: 'Your Spending Overview',
-                height: 160,
-                type: ChartPlaceholderType.bar,
+                title: 'Spending chart',
+                height: 240,
+                type: ChartPlaceholderType.line,
               );
             }
 
             final expenses =
                 expenseState is ExpenseLoaded ? expenseState.expenses : <dynamic>[];
+            final chartSource = hasLocalData
+                ? _analyticsFromExpenses(expenses)
+                : analyticsState.analysisOverTime;
+            final total = chartSource.values.fold<double>(0, (a, b) => a + b);
 
             return Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
@@ -77,108 +77,59 @@ class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Spending Overview',
-                        style: GoogleFonts.inter(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF0F172A),
-                        ),
-                      ),
-                      if (analyticsState.totalAmount > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEFF6FF),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '${analyticsState.totalAmount.toStringAsFixed(0)} EGP',
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFF0D5DB8),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
                     children: [
                       Expanded(
-                        child: _dateField(
-                          label: 'From',
-                          date: _fromDate,
-                          onTap: () => _pickDate(context, isFrom: true),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _dateField(
-                          label: 'To',
-                          date: _toDate,
-                          onTap: () => _pickDate(context, isFrom: false),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_hasDateFilter) ...[
-                    const SizedBox(height: 10),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _fromDate = null;
-                          _toDate = null;
-                          _selectedDayKey = null;
-                        });
-                        context.read<AnalyticsBloc>().refresh();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEF4444).withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: const Color(0xFFEF4444).withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.close_rounded,
-                                size: 16, color: Color(0xFFEF4444)),
-                            const SizedBox(width: 6),
                             Text(
-                              'Clear filter — show all',
+                              'Spending graph',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF0F172A),
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${total.toStringAsFixed(0)} EGP total',
                               style: GoogleFonts.inter(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: const Color(0xFFEF4444),
+                                color: const Color(0xFF64748B),
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
+                      GestureDetector(
+                        onTap: () => _openAnalysis(context),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'View analytics',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: _navy,
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right_rounded, size: 18, color: _navy),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
                   SizedBox(
-                    height: 240,
+                    height: 245,
                     child: SpendingLineChart(
-                      analyticsData: hasAnalytics
-                          ? analyticsState.analysisOverTime
-                          : _analyticsFromExpenses(expenses),
-                      fromDate: _fromDate,
-                      toDate: _toDate,
+                      analyticsData: chartSource,
                       onDayTapped: (dateKey) {
                         setState(() {
-                          _selectedDayKey =
-                              _selectedDayKey == dateKey ? null : dateKey;
+                          _selectedDayKey = dateKey.isEmpty ? null : dateKey;
                         });
                       },
                     ),
@@ -187,35 +138,8 @@ class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
                     _dayDetailCard(
                       _selectedDayKey!,
                       analyticsState,
-                      expenseState is ExpenseLoaded
-                          ? expenseState.expenses
-                          : [],
+                      expenseState is ExpenseLoaded ? expenseState.expenses : [],
                     ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D5DB8).withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.touch_app_rounded,
-                            size: 16, color: Color(0xFF0D5DB8)),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Tap a point to see details',
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            color: const Color(0xFF0D5DB8),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             );
@@ -223,116 +147,6 @@ class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
         );
       },
     );
-  }
-
-  Widget _dateField({
-    required String label,
-    required DateTime? date,
-    required VoidCallback onTap,
-  }) {
-    final display = formatDisplayDate(date);
-    final todaySelected = isToday(date);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: todaySelected
-                ? _navy.withValues(alpha: 0.06)
-                : const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: date != null
-                  ? (todaySelected
-                      ? _navy.withValues(alpha: 0.35)
-                      : _navy.withValues(alpha: 0.2))
-                  : const Color(0xFFE2E8F0),
-              width: 1.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: _navy.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: const Icon(
-                  Icons.calendar_today_rounded,
-                  color: _navy,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: GoogleFonts.inter(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF94A3B8),
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-                    Text(
-                      display,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF0F172A),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: _navy.withValues(alpha: 0.7),
-                size: 20,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickDate(BuildContext context, {required bool isFrom}) async {
-    final today = dateOnly(DateTime.now());
-    final picked = await showAppDatePicker(
-      context: context,
-      title: isFrom ? 'From date' : 'To date',
-      initialDate: isFrom
-          ? (_fromDate ?? today)
-          : (_toDate ?? _fromDate ?? today),
-      firstDate: isFrom ? DateTime(2020) : (_fromDate ?? DateTime(2020)),
-      lastDate: today,
-    );
-    if (picked == null || !context.mounted) return;
-
-    setState(() {
-      if (isFrom) {
-        _fromDate = dateOnly(picked);
-        if (_toDate != null && _toDate!.isBefore(_fromDate!)) {
-          _toDate = null;
-        }
-      } else {
-        _toDate = dateOnly(picked);
-      }
-      _selectedDayKey = null;
-    });
-    context.read<AnalyticsBloc>().refresh(from: _fromDate, to: _toDate);
   }
 
   Map<String, double> _analyticsFromExpenses(List<dynamic> expenses) {
@@ -385,63 +199,80 @@ class _HomeSpendingOverviewState extends State<HomeSpendingOverview> {
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D5DB8).withValues(alpha: 0.05),
+        color: _navy.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF0D5DB8).withValues(alpha: 0.15)),
+        border: Border.all(color: _navy.withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.calendar_today_rounded,
-                  size: 14, color: Color(0xFF0D5DB8)),
+              const Icon(Icons.calendar_today_rounded, size: 14, color: _navy),
               const SizedBox(width: 6),
-              Text(dateLabel,
-                  style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF0D5DB8))),
+              Text(
+                dateLabel,
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _navy,
+                ),
+              ),
               const Spacer(),
-              Text('${dayTotal.toStringAsFixed(0)} EGP',
-                  style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF0D5DB8))),
+              Text(
+                '${dayTotal.toStringAsFixed(0)} EGP',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _navy,
+                ),
+              ),
               GestureDetector(
                 onTap: () => setState(() => _selectedDayKey = null),
                 child: const Padding(
                   padding: EdgeInsets.only(left: 4),
-                  child: Icon(Icons.close_rounded,
-                      size: 16, color: Color(0xFF9CA3AF)),
+                  child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF9CA3AF)),
                 ),
               ),
             ],
           ),
           if (sorted.isNotEmpty)
-            ...sorted.take(3).map(
+            ...sorted.take(4).map(
                   (e) => Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Row(
                       children: [
                         Expanded(
-                            child: Text(e.key,
-                                style: GoogleFonts.inter(fontSize: 12))),
-                        Text('${e.value.toStringAsFixed(0)} EGP',
-                            style: GoogleFonts.inter(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
+                          child: Text(e.key, style: GoogleFonts.inter(fontSize: 12)),
+                        ),
+                        Text(
+                          '${e.value.toStringAsFixed(0)} EGP',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                )
-          else if (dayTotal == 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text('No spending on this day',
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: const Color(0xFF9CA3AF))),
-            ),
+                ),
         ],
+      ),
+    );
+  }
+
+  void _openAnalysis(BuildContext context) {
+    HapticFeedback.lightImpact();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: context.read<ExpenseBloc>()),
+            BlocProvider.value(value: context.read<AnalyticsBloc>()),
+          ],
+          child: const AnalysisPage(),
+        ),
       ),
     );
   }

@@ -8,7 +8,9 @@ import { User } from '../../DB/models/user.model.js';
 
 configDotenv.config();
 
-import { sendOTPEmail, sendPasswordResetEmail, sendWelcomeEmail } from '../../utils/emailService.js';
+import { sendOTPEmail, sendPasswordResetOTPEmail, sendWelcomeEmail } from '../../utils/emailService.js';
+import { verifyGoogleIdToken, isGoogleAuthConfigured } from '../../services/googleAuth.service.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Function: Creates a new user account and sends OTP verification email
 const signupAndSendOtp = catchError(async (req, res, next) => {
@@ -193,71 +195,168 @@ const changePassword = catchError(async (req, res, next) => {
     }
 });
 
-// Function: Initiates password recovery process by sending reset link
+// Function: Initiates password recovery by sending a 6-digit OTP
 const forgetPassword = catchError(async (req, res, next) => {
     console.log('[forgetPassword] START', { body: req.body });
     try {
-        const user = await User.findOne({ email: req.body.email });
+        const email = (req.body.email || '').toLowerCase().trim();
+        const user = await User.findOne({ email });
         if (!user) {
-            console.error('[forgetPassword] ERROR: Email not found', { email: req.body.email });
+            console.error('[forgetPassword] ERROR: Email not found', { email });
             return next(new AppError('User with this email does not exist', 404));
         }
-        if (!user.name) {
-            if (user.firstName && user.lastName) {
-                user.name = user.firstName + ' ' + user.lastName;
-                await user.save();
-            } else {
-                user.name = user.name;
-                await user.save();
-            }
+        if (!user.confEmail) {
+            return next(new AppError('Please verify your email before resetting password', 400));
         }
-        const resetToken = jwt.sign({ id: user._id, name: user.name }, process.env.JWT_KEY);
-        const resetLink = `${process.env.DOMAIN_URL}/${user.language}/reset-password?token=${resetToken}`;
-        console.log('[forgetPassword] SUCCESS', { email: user.email, resetLink });
+
+        const displayName = user.fullname || user.name || user.firstName || 'User';
+        const otp = (Math.floor(100000 + Math.random() * 900000)).toString();
+        user.resetOTP = otp;
+        user.resetOTPExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        await user.save();
+
+        console.log('[forgetPassword] SUCCESS', { email: user.email });
 
         try {
-            const mailResult = await sendPasswordResetEmail(user.email, resetLink, user.name);
+            const mailResult = await sendPasswordResetOTPEmail(user.email, otp, displayName);
             if (!mailResult.success) {
                 console.error('[forgetPassword] EMAIL ERROR', mailResult.error);
             } else {
-                console.log('[forgetPassword] EMAIL SENT', mailResult.messageId);
+                console.log('[forgetPassword] OTP EMAIL SENT', mailResult.messageId);
             }
         } catch (emailErr) {
             console.error('[forgetPassword] EMAIL THROW ERROR', emailErr);
         }
 
-        res.status(200).json({ message: 'Password reset email sent successfully' });
+        res.status(200).json({ message: 'Password reset code sent to your email' });
     } catch (err) {
         console.error('[forgetPassword] ERROR', { error: err, body: req.body });
         next(err);
     }
 });
 
-// Function: Completes password reset process using token from email
+// Function: Completes password reset using email + OTP
 const setNewPassword = catchError(async (req, res, next) => {
-    console.log('[setNewPassword] START', { query: req.query, body: req.body });
+    console.log('[setNewPassword] START', { body: req.body });
     try {
-        const decoded = jwt.verify(req.query.token, process.env.JWT_KEY);
-        const user = await User.findById(decoded.id);
-        if (!user) {
-            console.error('[setNewPassword] ERROR: Invalid user or token', { token: req.query.token });
-            return next(new AppError('Invalid_token_or_user_does_not_exist', 400));
+        const email = (req.body.email || '').toLowerCase().trim();
+        const otp = (req.body.otp || '').trim();
+        const { newPassword } = req.body;
+
+        if (!email || !otp || !newPassword) {
+            return next(new AppError('Email, OTP and new password are required', 400));
         }
-        if (bcrypt.compareSync(req.body.newPassword, user.password)) {
-            console.error('[setNewPassword] ERROR: New password same as old', { user: user.email });
-            return next(new AppError('New_password_cannot_be_the_same_as_the_old_password', 400));
+
+        const user = await User.findOne({ email });
+        if (!user || !user.resetOTP || user.resetOTP !== otp) {
+            console.error('[setNewPassword] ERROR: Invalid OTP', { email });
+            return next(new AppError('Invalid or expired reset code', 400));
         }
-        user.password = bcrypt.hashSync(req.body.newPassword, 10);
+
+        if (!user.resetOTPExpiresAt || user.resetOTPExpiresAt < new Date()) {
+            user.resetOTP = null;
+            user.resetOTPExpiresAt = null;
+            await user.save();
+            return next(new AppError('Reset code has expired. Request a new one.', 400));
+        }
+
+        if (bcrypt.compareSync(newPassword, user.password)) {
+            return next(new AppError('New password cannot be the same as the old password', 400));
+        }
+
+        user.password = bcrypt.hashSync(newPassword, 10);
+        user.resetOTP = null;
+        user.resetOTPExpiresAt = null;
+        user.passwordChangedAt = new Date();
         await user.save();
+
         console.log('[setNewPassword] SUCCESS', { user: user.email });
-        res.status(200).json({ message: 'Password_reset_successfully' });
+        res.status(200).json({ message: 'Password reset successfully' });
     } catch (error) {
-        console.error('[setNewPassword] ERROR', { error, query: req.query, body: req.body });
-        return next(new AppError('Invalid_or_expired_token', 400));
+        console.error('[setNewPassword] ERROR', { error, body: req.body });
+        return next(new AppError('Failed to reset password', 400));
     }
 });
 
-// Google authentication setup
+// Google Sign-In (mobile) — verify ID token from Flutter google_sign_in
+const googleSignIn = catchError(async (req, res, next) => {
+    console.log('[googleSignIn] START');
+    try {
+        if (!isGoogleAuthConfigured()) {
+            return next(new AppError('Google Sign-In is not configured on the server', 503));
+        }
+
+        const { idToken } = req.body;
+        if (!idToken) {
+            return next(new AppError('Google ID token is required', 400));
+        }
+
+        let payload;
+        try {
+            payload = await verifyGoogleIdToken(idToken);
+        } catch (err) {
+            console.error('[googleSignIn] Token verify failed', err.message);
+            return next(new AppError('Invalid Google token', 401));
+        }
+
+        const email = payload.email.toLowerCase().trim();
+        const googleId = payload.sub;
+        const fullName = payload.name || payload.given_name || 'User';
+        const nameParts = fullName.trim().split(/\s+/);
+        const firstName = nameParts[0] || 'User';
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : firstName;
+
+        let user = await User.findOne({ $or: [{ googleId }, { email }] });
+
+        if (user) {
+            if (user.isDeleted) {
+                return next(new AppError('Account not found', 404));
+            }
+            if (!user.googleId) user.googleId = googleId;
+            if (!user.confEmail) user.confEmail = true;
+            if (user.authProvider !== 'google') user.authProvider = 'google';
+            if (!user.fullname) user.fullname = fullName;
+            await user.save();
+        } else {
+            user = await User.create({
+                fullname: fullName,
+                firstName,
+                lastName,
+                email,
+                googleId,
+                authProvider: 'google',
+                confEmail: true,
+                password: await bcrypt.hash(uuidv4(), 10),
+                phone: '',
+                country: 'Egypt',
+                countryCode: '+20',
+            });
+
+            try {
+                await sendWelcomeEmail(user.email, fullName);
+            } catch (emailErr) {
+                console.error('[googleSignIn] Welcome email error', emailErr);
+            }
+        }
+
+        const token = jwt.sign(
+            { id: user._id, role: user.role, email: user.email },
+            process.env.JWT_KEY,
+        );
+
+        console.log('[googleSignIn] SUCCESS', { email: user.email });
+        return res.status(200).json({
+            message: 'Google sign-in successful',
+            user,
+            token,
+        });
+    } catch (err) {
+        console.error('[googleSignIn] ERROR', err);
+        next(err);
+    }
+});
+
+// Google authentication setup (legacy web redirect — optional)
 const googleAuth = [
   (req, res, next) => {
     console.log('[googleAuth] START - redirecting user to Google for authentication');
@@ -372,5 +471,6 @@ export {
     googleCallback,
     getProfile,
     updateProfile,
-    deleteAccount
+    deleteAccount,
+    googleSignIn,
 };

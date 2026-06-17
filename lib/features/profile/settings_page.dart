@@ -5,6 +5,7 @@ import '../../core/services/notification_api_service.dart';
 import '../../services/notification_service.dart';
 import '../../features/reminders/models/reminder.dart';
 import 'widgets/profile_ui.dart';
+import 'widgets/export_sheet.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -116,10 +117,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ProfileCard(
                       children: [
                         _actionTile(Icons.cloud_download_outlined, 'Export data',
-                            'Download as CSV', () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Export — coming soon')),
-                          );
+                            'PDF or CSV with date range', () {
+                          showExportSheet(context);
                         }),
                         const Divider(height: 1, indent: 16, endIndent: 16),
                         _actionTile(Icons.delete_sweep_outlined, 'Clear cache',

@@ -8,6 +8,7 @@ import { connectDatabase } from './config/database.js';
 import { createApp } from './app.js';
 import { startWsServer } from './module/analysis/wsServer.js';
 import { startAiService, stopAiService } from './services/aiService.js';
+import { warmOffersCache } from './module/offers/offer.service.js';
 import { handleRuntimeError, handleErrorCode } from './utils/outError.js';
 
 // Enable logging
@@ -20,25 +21,23 @@ async function startServer() {
   // Connect to database
   await connectDatabase();
 
-  // Start unified AI service (voice + OCR) as child process
-  await startAiService();
-  
-  // Create Express app
   const app = createApp();
-  
-  // Create HTTP server
   const server = http.createServer(app);
-  
-  // Start HTTP server
+
   server.listen(config.port, '0.0.0.0', () => {
     console.log(`[SERVER] HTTP server running on port ${config.port}`);
     console.log(`[SERVER] Environment: ${config.nodeEnv}`);
+    warmOffersCache();
   });
-  
-  // Start WebSocket server (separate port for DigitalOcean)
+
   if (config.nodeEnv !== 'test') {
     startWsServer({ port: config.wsPort });
   }
+
+  // AI starts in background — HTTP + WS are ready immediately
+  startAiService().catch((err) => {
+    console.error('[AI] Failed to start:', err.message || err);
+  });
   
   // Graceful shutdown
   const shutdown = async (signal) => {

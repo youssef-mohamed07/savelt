@@ -36,6 +36,7 @@ class ApiConfig {
   static const String authResendOtp       = '/auth/resendOTP';
   static const String authForgetPassword  = '/auth/forgetPassword';
   static const String authSetNewPassword  = '/auth/setNewPassword';
+  static const String authGoogle          = '/auth/google';
   static const String authProfile         = '/auth/profile';
   static const String authDeleteAccount   = '/auth/account';
 
@@ -79,6 +80,20 @@ class ApiConfig {
 
   // ── Health ──────────────────────────────────────────────────────────────────
   static const String healthCheck = '/api';
+
+  // ── Google Sign-In ──────────────────────────────────────────────────────────
+  // Set via: flutter run --dart-define=GOOGLE_WEB_CLIENT_ID=xxx --dart-define=GOOGLE_IOS_CLIENT_ID=yyy
+  // Defaults from Firebase google-services.json (Android web + iOS clients).
+  static const String googleWebClientId = String.fromEnvironment(
+    'GOOGLE_WEB_CLIENT_ID',
+    defaultValue:
+        '16052237336-o9pt8bkl1oa0u18o7btqo3q4a0hg1cvq.apps.googleusercontent.com',
+  );
+  static const String googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+    defaultValue:
+        '16052237336-r9jgp3o2cqo70hpfpg4c7q8eioq7mu7m.apps.googleusercontent.com',
+  );
 
   // ── Timeouts ────────────────────────────────────────────────────────────────
   static const Duration connectionTimeout = Duration(seconds: 10);

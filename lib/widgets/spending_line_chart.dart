@@ -160,29 +160,34 @@ class _SpendingLineChartState extends State<SpendingLineChart> {
       return _buildEmpty();
     }
 
-    return GestureDetector(
-      onTapUp: (details) => _handleTap(details.localPosition, points),
-      onTapDown: (_) {},
-      child: CustomPaint(
-        size: const Size(double.infinity, 220),
-        painter: _LinePainter(
-          points: points,
-          tappedIndex: _tappedIndex,
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) =>
+              _selectNearest(details.localPosition, points, constraints.maxWidth),
+          onHorizontalDragStart: (details) =>
+              _selectNearest(details.localPosition, points, constraints.maxWidth),
+          onHorizontalDragUpdate: (details) =>
+              _selectNearest(details.localPosition, points, constraints.maxWidth),
+          child: CustomPaint(
+            size: Size(constraints.maxWidth, 245),
+            painter: _LinePainter(
+              points: points,
+              tappedIndex: _tappedIndex,
+            ),
+          ),
+        );
+      },
     );
   }
 
-  void _handleTap(Offset pos, List<_ChartPoint> points) {
+  void _selectNearest(Offset pos, List<_ChartPoint> points, double width) {
     if (points.length < 2) return;
 
-    // Chart area: left=50, right=full width, top=10, bottom=170
-    // We need the actual render size — approximate using MediaQuery
-    final width = MediaQuery.of(context).size.width - 40; // padding
-    const chartLeft = 50.0;
-    const chartRight = 0.0; // painter uses full width - 50
+    const chartLeft = _LinePainter.leftPad;
+    const chartRight = _LinePainter.rightPad;
     final chartWidth = width - chartLeft - chartRight;
-
     final step = chartWidth / (points.length - 1);
 
     int? closest;
@@ -196,15 +201,14 @@ class _SpendingLineChartState extends State<SpendingLineChart> {
       }
     }
 
-    if (minDist < 40) {
-      setState(() => _tappedIndex = _tappedIndex == closest ? null : closest);
-      if (closest != null && _tappedIndex == closest) {
+    if (closest != null && minDist < 34) {
+      if (_tappedIndex != closest) {
+        setState(() => _tappedIndex = closest);
         widget.onDayTapped?.call(points[closest].dateKey);
-      } else {
-        widget.onDayTapped?.call('');
       }
-    } else {
+    } else if (_tappedIndex != null) {
       setState(() => _tappedIndex = null);
+      widget.onDayTapped?.call('');
     }
   }
 
@@ -285,8 +289,8 @@ class _LinePainter extends CustomPainter {
   final List<_ChartPoint> points;
   final int? tappedIndex;
 
-  static const double _leftPad = 50;
-  static const double _rightPad = 16;
+  static const double leftPad = 50;
+  static const double rightPad = 16;
   static const double _topPad = 30;
   static const double _bottomPad = 40;
 
@@ -296,11 +300,10 @@ class _LinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
-    final chartW = size.width - _leftPad - _rightPad;
+    final chartW = size.width - leftPad - rightPad;
     final chartH = size.height - _topPad - _bottomPad;
 
     final maxAmt = points.map((p) => p.amount).reduce((a, b) => a > b ? a : b);
-    final minAmt = 0.0; // always start Y from 0
 
     // ── Grid lines ────────────────────────────────────────────────────────────
     final gridPaint = Paint()
@@ -311,7 +314,7 @@ class _LinePainter extends CustomPainter {
     for (int i = 0; i <= gridLines; i++) {
       final y = _topPad + chartH * i / gridLines;
       canvas.drawLine(
-          Offset(_leftPad, y), Offset(size.width - _rightPad, y), gridPaint);
+          Offset(leftPad, y), Offset(size.width - rightPad, y), gridPaint);
 
       // Y-axis label
       final labelAmt = maxAmt * (1 - i / gridLines);
@@ -321,7 +324,7 @@ class _LinePainter extends CustomPainter {
         Offset(0, y - 7),
         const Color(0xFF9CA3AF),
         10,
-        width: _leftPad - 4,
+        width: leftPad - 4,
         align: TextAlign.right,
       );
     }
@@ -331,7 +334,7 @@ class _LinePainter extends CustomPainter {
 
     List<Offset> offsets = [];
     for (int i = 0; i < points.length; i++) {
-      final x = _leftPad + step * i;
+      final x = leftPad + step * i;
       final normalized = maxAmt > 0 ? points[i].amount / maxAmt : 0.0;
       final y = _topPad + chartH * (1 - normalized);
       offsets.add(Offset(x, y));
@@ -363,8 +366,8 @@ class _LinePainter extends CustomPainter {
       Paint()
         ..shader = LinearGradient(
           colors: [
-            const Color(0xFF1478E0).withOpacity(0.2),
-            const Color(0xFF1478E0).withOpacity(0.02),
+            const Color(0xFF1478E0).withValues(alpha: 0.2),
+            const Color(0xFF1478E0).withValues(alpha: 0.02),
           ],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
@@ -400,15 +403,19 @@ class _LinePainter extends CustomPainter {
       final o = offsets[i];
       final isSelected = tappedIndex == i;
 
-      // Dot
-      canvas.drawCircle(
+      if (isSelected) {
+        canvas.drawCircle(
           o,
-          isSelected ? 7 : 4,
-          Paint()..color = Colors.white);
+          14,
+          Paint()..color = const Color(0xFF1478E0).withValues(alpha: 0.14),
+        );
+      }
+      canvas.drawCircle(o, isSelected ? 8 : 5, Paint()..color = Colors.white);
       canvas.drawCircle(
-          o,
-          isSelected ? 5 : 3,
-          Paint()..color = const Color(0xFF1478E0));
+        o,
+        isSelected ? 5.5 : 3.5,
+        Paint()..color = const Color(0xFF1478E0),
+      );
 
       // X-axis label — smart spacing to avoid crowding
       final bool showLabel;
@@ -447,7 +454,7 @@ class _LinePainter extends CustomPainter {
 
     // Position tooltip above the dot, keep within bounds
     double tx = point.dx - tooltipW / 2;
-    tx = tx.clamp(_leftPad, (size.width - _rightPad - tooltipW).clamp(_leftPad, double.infinity));
+    tx = tx.clamp(leftPad, (size.width - rightPad - tooltipW).clamp(leftPad, double.infinity));
     
     // Ensure min <= max for vertical clamp
     final tyMin = _topPad - 10.0;
@@ -462,7 +469,7 @@ class _LinePainter extends CustomPainter {
     // Shadow
     canvas.drawRRect(
       rect.shift(const Offset(0, 2)),
-      Paint()..color = Colors.black.withOpacity(0.12),
+      Paint()..color = Colors.black.withValues(alpha: 0.12),
     );
 
     // Background
@@ -481,7 +488,7 @@ class _LinePainter extends CustomPainter {
       canvas,
       p.label,
       Offset(tx + 8, ty + 6),
-      Colors.white.withOpacity(0.75),
+      Colors.white.withValues(alpha: 0.75),
       10,
       width: tooltipW - 16,
     );

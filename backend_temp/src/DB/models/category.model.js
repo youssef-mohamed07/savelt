@@ -44,6 +44,11 @@ const schema = new mongoose.Schema(
 
 // Compound index for unique category name per user
 schema.index({ user: 1, name: 1 }, { unique: true });
+schema.index({ user: 1, createdAt: -1 });
+
+schema.statics.findForUser = function (userId) {
+  return this.find({ user: userId }).sort({ name: 1 });
+};
 
 // Create and export the Category model
 export const Category = mongoose.model("Category", schema);

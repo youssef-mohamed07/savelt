@@ -38,9 +38,13 @@ cp backend_temp/.env.example backend_temp/.env
 ```
 
 عدّل القيم المهمة:
-- `MONGO_URI` — رابط MongoDB
+- `MONGO_URI` — رابط MongoDB Atlas (قاعدة البيانات الوحيدة — Mongoose ORM)
+- `MONGO_DB_NAME` — اسم قاعدة البيانات (افتراضي: `test`)
 - `JWT_KEY` — مفتاح سري للـ JWT
-- `RAPIDAPI_KEY` — (اختياري) لعروض Amazon
+
+> **Offers:** Amazon + Noon + Jumia — direct fetch (no API key).
+
+> **ملاحظة:** لا يوجد Postgres أو SQLite في المشروع. كل البيانات في MongoDB عبر الـ Backend.
 
 ### Voice AI — `voice_server/.env`
 
@@ -83,7 +87,7 @@ chmod +x start.sh    # أول مرة فقط
 ./start.sh
 ```
 
-يشغّل:
+يشغّل **بالتوازي** (Backend + AI + Flutter):
 | الخدمة | المنفذ | الرابط |
 |--------|--------|--------|
 | Backend API | 3001 | http://localhost:3001/api |

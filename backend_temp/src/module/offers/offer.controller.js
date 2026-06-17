@@ -24,6 +24,7 @@ async function getOffers(req, res, next) {
     const result = await getPersonalizedOffers(String(userId));
     return res.status(200).json({
       success: true,
+      source: result.source ?? "amazon+noon+jumia",
       categories: result.categories,
       defaultedCategory: result.defaultedCategory,
       cached: result.cached,
@@ -33,10 +34,11 @@ async function getOffers(req, res, next) {
   } catch (err) {
     console.error('[OFFERS ERROR]', err);
     const code = Number(err.statusCode) || 500;
-    if (code >= 500) {
+    if (code >= 500 || code === 503) {
       return res.status(code).json({
         success: false,
-        message: err.message || "Unable to load product offers. Please try again later."
+        message: err.message || "Unable to load product offers. Please try again later.",
+        code: err.code || undefined,
       });
     }
     return next(err);

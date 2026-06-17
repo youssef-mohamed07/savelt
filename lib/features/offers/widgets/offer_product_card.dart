@@ -1,20 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../../core/utils/marketplace_url.dart';
 import '../../../widgets/amazon_product_image.dart';
+import '../../../widgets/marketplace_badge.dart';
 
 class OfferProductCard extends StatelessWidget {
   final Map<String, dynamic> offer;
-  final bool saved;
-  final VoidCallback onSaveToggle;
 
   static const _navy = Color(0xFF0D5DB8);
 
   const OfferProductCard({
     super.key,
     required this.offer,
-    required this.saved,
-    required this.onSaveToggle,
   });
 
   @override
@@ -26,6 +23,7 @@ class OfferProductCard extends StatelessWidget {
     final rating = offer['rating']?.toString() ?? '4.0';
     final reviews = offer['reviews']?.toString() ?? '';
     final imageUrl = offer['imageUrl'] as String?;
+    final marketplace = offer['marketplace']?.toString() ?? 'amazon';
     final showOldPrice = oldPrice.isNotEmpty && oldPrice != price;
     final showDiscount = discount.isNotEmpty;
 
@@ -33,7 +31,11 @@ class OfferProductCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => _openAmazon(offer['url']?.toString()),
+        onTap: () => openMarketplaceProduct(
+          context,
+          url: offer['url']?.toString(),
+          marketplace: marketplace,
+        ),
         child: Ink(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -52,10 +54,9 @@ class OfferProductCard extends StatelessWidget {
             children: [
               _buildImageSection(
                 imageUrl: imageUrl,
+                marketplace: marketplace,
                 showDiscount: showDiscount,
                 discount: discount,
-                saved: saved,
-                onSaveToggle: onSaveToggle,
               ),
               Expanded(
                 child: Padding(
@@ -82,7 +83,11 @@ class OfferProductCard extends StatelessWidget {
                         children: [
                           _RatingChip(rating: rating, reviews: reviews),
                           const Spacer(),
-                          _AmazonBadge(),
+                          MarketplaceBadge(
+                            marketplace: marketplace,
+                            height: 20,
+                            compact: true,
+                          ),
                         ],
                       ),
                     ],
@@ -98,10 +103,9 @@ class OfferProductCard extends StatelessWidget {
 
   Widget _buildImageSection({
     required String? imageUrl,
+    required String marketplace,
     required bool showDiscount,
     required String discount,
-    required bool saved,
-    required VoidCallback onSaveToggle,
   }) {
     return Stack(
       children: [
@@ -124,6 +128,7 @@ class OfferProductCard extends StatelessWidget {
                 imageUrl: imageUrl,
                 height: 88,
                 fit: BoxFit.contain,
+                marketplace: marketplace,
               ),
             ),
           ),
@@ -159,37 +164,9 @@ class OfferProductCard extends StatelessWidget {
             ),
           ),
         Positioned(
-          top: 14,
-          right: 14,
-          child: GestureDetector(
-            onTap: onSaveToggle,
-            behavior: HitTestBehavior.opaque,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(
-                color: saved
-                    ? const Color(0xFFFEE2E2)
-                    : Colors.white.withValues(alpha: 0.95),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: saved ? const Color(0xFFFECACA) : const Color(0xFFE2E8F0),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                saved ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                size: 16,
-                color: saved ? const Color(0xFFEF4444) : const Color(0xFF94A3B8),
-              ),
-            ),
-          ),
+          bottom: 14,
+          left: 14,
+          child: MarketplaceBadge(marketplace: marketplace, height: 18, compact: true),
         ),
       ],
     );
@@ -224,11 +201,6 @@ class OfferProductCard extends StatelessWidget {
       ],
     );
   }
-
-  Future<void> _openAmazon(String? url) async {
-    final target = (url == null || url.isEmpty) ? 'https://www.amazon.eg' : url;
-    await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
-  }
 }
 
 class _RatingChip extends StatelessWidget {
@@ -259,40 +231,12 @@ class _RatingChip extends StatelessWidget {
               color: const Color(0xFF92400E),
             ),
           ),
-          if (reviews.isNotEmpty) ...[
+          if (reviews.isNotEmpty && reviews != '0') ...[
             Text(
               ' · $reviews',
               style: GoogleFonts.inter(fontSize: 9.5, color: const Color(0xFFB45309)),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _AmazonBadge extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Amazon',
-            style: GoogleFonts.inter(
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF0D5DB8),
-            ),
-          ),
-          const SizedBox(width: 2),
-          Icon(Icons.arrow_outward_rounded, size: 11, color: Colors.grey.shade600),
         ],
       ),
     );

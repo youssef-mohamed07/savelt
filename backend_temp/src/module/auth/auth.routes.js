@@ -11,7 +11,8 @@ import {
     googleAuth,
     getProfile,
     updateProfile,
-    deleteAccount
+    deleteAccount,
+    googleSignIn,
 } from './auth.controller.js';
 import { validate } from '../../middleware/validate.js';
 import { otpValidationSchema, signinValidationSchema, signupValidationSchema } from './auth.validation.js';
@@ -38,8 +39,11 @@ authRouter.post('/resendOTP', resendOtp);
 // Forget Password
 authRouter.post('/forgetPassword', forgetPassword);
 
-// Set New Password (with token)
+// Set New Password (with OTP)
 authRouter.post('/setNewPassword', setNewPassword);
+
+// Google Sign-In (mobile)
+authRouter.post('/google', googleSignIn);
 
 // Profile routes
 authRouter.get('/profile', protectedRoutes, getProfile);

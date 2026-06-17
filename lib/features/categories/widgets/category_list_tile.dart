@@ -10,6 +10,8 @@ class CategoryListTile extends StatelessWidget {
   final bool isDefault;
   final VoidCallback onTap;
   final VoidCallback? onDelete;
+  final VoidCallback? onAnalysisTap;
+  final Color? accentColor;
 
   const CategoryListTile({
     super.key,
@@ -20,12 +22,15 @@ class CategoryListTile extends StatelessWidget {
     required this.isDefault,
     required this.onTap,
     this.onDelete,
+    this.onAnalysisTap,
+    this.accentColor,
   });
 
   @override
   Widget build(BuildContext context) {
     final style = categoryUiStyle(name);
     final pct = (share * 100).round();
+    final barColor = accentColor ?? style.color;
 
     return Material(
       color: Colors.transparent,
@@ -49,10 +54,16 @@ class CategoryListTile extends StatelessWidget {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: style.background,
-                        borderRadius: BorderRadius.circular(13),
-                      ),
-                      child: Icon(style.icon, color: style.color, size: 22),
+                      color: style.background,
+                      borderRadius: BorderRadius.circular(13),
+                      border: accentColor != null
+                          ? Border.all(
+                              color: accentColor!.withValues(alpha: 0.35),
+                              width: 2,
+                            )
+                          : null,
+                    ),
+                    child: Icon(style.icon, color: style.color, size: 22),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -99,6 +110,21 @@ class CategoryListTile extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (onAnalysisTap != null) ...[
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: onAnalysisTap,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(Icons.insights_outlined,
+                              size: 18, color: barColor),
+                        ),
+                      ),
+                    ],
                     if (!isDefault && onDelete != null) ...[
                       const SizedBox(width: 8),
                       GestureDetector(
@@ -127,7 +153,7 @@ class CategoryListTile extends StatelessWidget {
                       value: share.clamp(0.0, 1.0),
                       minHeight: 5,
                       backgroundColor: const Color(0xFFF1F5F9),
-                      color: style.color,
+                      color: barColor,
                     ),
                   ),
                 ],

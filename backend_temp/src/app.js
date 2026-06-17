@@ -16,9 +16,12 @@ import { URL_Error } from './utils/URL_Catch.js';
 
 // Routes
 import { bootstrap } from './module/bootStrap.js';
+import { ensureUploadDirs } from './middleware/upload.js';
 
 export function createApp() {
   const app = express();
+
+  ensureUploadDirs();
 
   // Security & CORS
   app.use(cors({

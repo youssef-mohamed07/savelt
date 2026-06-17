@@ -1,23 +1,15 @@
 /**
- * Database Connection Module
- * MongoDB (default) or Supabase Postgres via DB_PROVIDER
+ * MongoDB connection via Mongoose ORM (single database for the app).
  */
 import mongoose from 'mongoose';
 import { config } from './index.js';
-import { connectPostgres, disconnectPostgres } from './postgres.js';
 
 let isConnected = false;
 
 export async function connectDatabase() {
   if (isConnected) {
-    console.log('[DB] Using existing connection');
-    return;
-  }
-
-  if (config.dbProvider === 'postgres') {
-    await connectPostgres();
-    isConnected = true;
-    return;
+    console.log('[DB] Using existing MongoDB connection');
+    return mongoose.connection;
   }
 
   if (!config.mongoUri) {
@@ -28,38 +20,39 @@ export async function connectDatabase() {
   try {
     const conn = await mongoose.connect(config.mongoUri, {
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 30000,  // 30s — Atlas can be slow on first connect
+      serverSelectionTimeoutMS: 30000,
       socketTimeoutMS: 45000,
-      dbName: 'test',                   // always use 'test' database
+      dbName: config.mongoDbName,
     });
-    
+
     isConnected = true;
-    console.log(`[DB] ✅ Connected to MongoDB: ${conn.connection.host} | db: ${conn.connection.db.databaseName}`);
-    
-    // Handle connection events
+    console.log(
+      `[DB] ✅ MongoDB (Mongoose) → ${conn.connection.host} | db: ${conn.connection.db.databaseName}`,
+    );
+
     mongoose.connection.on('error', (err) => {
-      console.error('[DB] Connection error:', err.message);
+      console.error('[DB] MongoDB error:', err.message);
     });
-    
+
     mongoose.connection.on('disconnected', () => {
-      console.log('[DB] Disconnected from MongoDB');
+      console.log('[DB] MongoDB disconnected');
       isConnected = false;
     });
-    
+
+    return conn.connection;
   } catch (error) {
-    console.error('[DB] Connection failed:', error.message);
+    console.error('[DB] MongoDB connection failed:', error.message);
     process.exit(1);
   }
 }
 
 export async function disconnectDatabase() {
   if (!isConnected) return;
-
-  if (config.dbProvider === 'postgres') {
-    await disconnectPostgres();
-  } else {
-    await mongoose.connection.close();
-  }
+  await mongoose.connection.close();
   isConnected = false;
-  console.log('[DB] Connection closed');
+  console.log('[DB] MongoDB connection closed');
+}
+
+export function getConnection() {
+  return mongoose.connection;
 }

@@ -136,6 +136,32 @@ class AuthApiService {
     return AuthApiResult.failure(message: response.message ?? 'Login failed');
   }
 
+  // Google Sign-In — verify ID token on backend
+  Future<AuthApiResult> signInWithGoogle({required String idToken}) async {
+    final response = await _api.post('/auth/google', body: {
+      'idToken': idToken,
+    });
+
+    if (response.isSuccess) {
+      final token = response.getData<String>('token');
+      final userData = response.getData<Map<String, dynamic>>('user');
+
+      if (token != null) {
+        _api.setToken(token);
+        await _storage.saveToken(token);
+
+        if (userData != null) {
+          _currentUser = UserModel.fromMap(_convertUserData(userData));
+          await _storage.saveUser(_currentUser!.toMap());
+        }
+
+        return AuthApiResult.success(user: _currentUser, token: token);
+      }
+    }
+
+    return AuthApiResult.failure(message: response.message ?? 'Google sign-in failed');
+  }
+
   // Change Password
   Future<AuthApiResult> changePassword({
     required String oldPassword,
@@ -212,25 +238,28 @@ class AuthApiService {
     return AuthApiResult.failure(message: response.message ?? 'Failed to update profile');
   }
 
-  // Forget Password - Request reset email
+  // Forget Password - Request reset OTP
   Future<AuthApiResult> forgetPassword(String email) async {
     final response = await _api.post('/auth/forgetPassword', body: {
       'email': email,
     });
 
     if (response.isSuccess) {
-      return AuthApiResult.success(message: response.message ?? 'Reset email sent');
+      return AuthApiResult.success(message: response.message ?? 'Reset code sent');
     }
 
-    return AuthApiResult.failure(message: response.message ?? 'Failed to send reset email');
+    return AuthApiResult.failure(message: response.message ?? 'Failed to send reset code');
   }
 
-  // Set New Password - After reset
+  // Set New Password - After OTP verification
   Future<AuthApiResult> setNewPassword({
-    required String token,
+    required String email,
+    required String otp,
     required String newPassword,
   }) async {
-    final response = await _api.post('/auth/setNewPassword?token=$token', body: {
+    final response = await _api.post('/auth/setNewPassword', body: {
+      'email': email,
+      'otp': otp,
       'newPassword': newPassword,
     });
 

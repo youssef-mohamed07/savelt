@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/services/ocr_scanner_service.dart';
+import '../../features/categories/bloc/category_bloc.dart';
+import '../../features/home/bloc/expense_bloc.dart';
+import 'ocr_results_dialog.dart';
 
-/// Pick receipt → show scanning UI → return [OcrResult].
+/// Pick receipt → scan → review in one bottom sheet (no second modal delay).
 Future<OcrResult?> showOcrScanFlow(
   BuildContext context, {
   required bool fromCamera,
@@ -23,14 +27,25 @@ Future<OcrResult?> showOcrScanFlow(
     enableDrag: false,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.5),
-    builder: (ctx) => OcrScanningSheet(imageFile: file),
+    builder: (ctx) => OcrScanningSheet(
+      imageFile: file,
+      expenseBloc: context.read<ExpenseBloc>(),
+      categoryBloc: context.read<CategoryBloc>(),
+    ),
   );
 }
 
 class OcrScanningSheet extends StatefulWidget {
   final File imageFile;
+  final ExpenseBloc expenseBloc;
+  final CategoryBloc categoryBloc;
 
-  const OcrScanningSheet({super.key, required this.imageFile});
+  const OcrScanningSheet({
+    super.key,
+    required this.imageFile,
+    required this.expenseBloc,
+    required this.categoryBloc,
+  });
 
   @override
   State<OcrScanningSheet> createState() => _OcrScanningSheetState();
@@ -54,6 +69,10 @@ class _OcrScanningSheetState extends State<OcrScanningSheet>
   late final AnimationController _pulseController;
   Timer? _stepTimer;
   int _activeStep = 0;
+  OcrResult? _scanResult;
+
+  bool get _showReview =>
+      _scanResult?.isSuccess == true && _scanResult?.invoice != null;
 
   @override
   void initState() {
@@ -63,7 +82,7 @@ class _OcrScanningSheetState extends State<OcrScanningSheet>
       duration: const Duration(milliseconds: 1200),
     )..repeat(reverse: true);
 
-    _stepTimer = Timer.periodic(const Duration(milliseconds: 2200), (_) {
+    _stepTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
       if (!mounted || _activeStep >= _steps.length - 1) return;
       setState(() => _activeStep++);
     });
@@ -76,6 +95,15 @@ class _OcrScanningSheetState extends State<OcrScanningSheet>
       widget.imageFile,
     );
     if (!mounted) return;
+
+    if (result.isSuccess && result.invoice != null) {
+      setState(() {
+        _scanResult = result;
+        _activeStep = _steps.length - 1;
+      });
+      return;
+    }
+
     Navigator.pop(context, result);
   }
 
@@ -88,6 +116,14 @@ class _OcrScanningSheetState extends State<OcrScanningSheet>
 
   @override
   Widget build(BuildContext context) {
+    if (_showReview) {
+      return OcrResultsDialog(
+        invoice: _scanResult!.invoice!,
+        expenseBloc: widget.expenseBloc,
+        categoryBloc: widget.categoryBloc,
+      );
+    }
+
     final bottom = MediaQuery.of(context).padding.bottom;
 
     return Container(
@@ -118,7 +154,7 @@ class _OcrScanningSheetState extends State<OcrScanningSheet>
           ),
           const SizedBox(height: 6),
           Text(
-            'This may take up to a minute',
+            'Usually 10–30 seconds',
             style: GoogleFonts.inter(
               fontSize: 13,
               color: const Color(0xFF64748B),
@@ -260,6 +296,7 @@ class _ReceiptPreview extends StatelessWidget {
               imageFile,
               fit: BoxFit.cover,
               width: double.infinity,
+              cacheWidth: 800,
             ),
           ),
           Positioned.fill(

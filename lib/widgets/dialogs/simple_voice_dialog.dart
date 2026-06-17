@@ -201,11 +201,15 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
       final directory = await getTemporaryDirectory();
       _audioPath = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       
-      // Record with high quality settings for better server transcription
+      // Keep iOS on standard AAC settings; very low sample rates can create
+      // header-only files on the simulator.
       await _recorderController.record(
         path: _audioPath,
-        bitRate: 128000, // High quality bitrate
-        sampleRate: 44100, // CD quality sample rate
+        androidEncoder: AndroidEncoder.aac,
+        androidOutputFormat: AndroidOutputFormat.mpeg4,
+        iosEncoder: IosEncoder.kAudioFormatMPEG4AAC,
+        bitRate: Platform.isIOS ? 128000 : 64000,
+        sampleRate: Platform.isIOS ? 44100 : 16000,
       );
       
       setState(() {
@@ -251,8 +255,27 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
       _startProcessingSteps();
       
       if (path != null && path.isNotEmpty) {
+        final audioFile = File(path);
+        final fileSize = await audioFile.length();
+        if (fileSize < 1024) {
+          _stopProcessingSteps();
+          if (!mounted) return;
+          setState(() {
+            _isProcessing = false;
+            _recognizedText = 'Recording was too short. Please try again and speak for at least one second.';
+          });
+          return;
+        }
+
         // Send directly to server (server handles Arabic better)
-        await _analyzeAudioFile(File(path));
+        await _analyzeAudioFile(audioFile);
+      } else {
+        _stopProcessingSteps();
+        if (!mounted) return;
+        setState(() {
+          _isProcessing = false;
+          _recognizedText = 'Recording failed. Please try again.';
+        });
       }
     } catch (e) {
       print('Error stopping recording: $e');
@@ -289,21 +312,35 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
         print('📝 Transcription: "$text"');
         print('📊 Found ${transactionsList?.length ?? 0} transactions');
         
+        final clientItemized = _splitItemizedVoiceTransactions(text);
+
         if (transactionsList != null && transactionsList.isNotEmpty) {
-          _transactions = transactionsList.map((t) {
+          // Prefer server (LLM/rule engine); client split only if server missed items
+          final useClientSplit = transactionsList.length == 1 &&
+              clientItemized.length > 1;
+
+          final source = useClientSplit ? clientItemized : transactionsList;
+
+          _transactions = source.map((t) {
             final amount = (t['amount'] as num?)?.toDouble() ?? 0.0;
             final rawCategory = t['category'] as String? ?? 'Other';
-            final extractedText = (t['extracted_text'] as String? ?? '').trim();
+            final segment = (t['extracted_text'] as String?) ??
+                (t['original'] is Map ? (t['original'] as Map)['extracted_text'] as String? : null) ??
+                text;
 
-            // Use the full transcription as description — it's what the user actually said
-            final description = text.isNotEmpty ? text : (extractedText.isNotEmpty ? extractedText : rawCategory);
+            final description = useClientSplit
+                ? (t['description'] as String? ?? '')
+                : _transactionDescription(
+                    transaction: t,
+                    fullTranscription: segment,
+                    fallbackCategory: rawCategory,
+                  );
 
-            // Infer category from the actual Arabic text
             final mappedCategory = _mapServerCategoryToApp(rawCategory);
-            final category = text.isNotEmpty
-                ? _inferCategoryFromText(text, fallback: mappedCategory)
+            final category = segment.isNotEmpty
+                ? _inferCategoryFromText(segment, fallback: mappedCategory)
                 : mappedCategory;
-            
+
             return {
               'amount': amount,
               'category': category,
@@ -311,7 +348,14 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
               'original': t,
             };
           }).toList();
-          
+
+          setState(() {
+            _recognizedText = text;
+            _showResults = true;
+          });
+          _initResultControllers();
+        } else if (clientItemized.isNotEmpty) {
+          _transactions = clientItemized;
           setState(() {
             _recognizedText = text;
             _showResults = true;
@@ -336,6 +380,222 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
       });
       print('❌ Error analyzing audio: $e');
     }
+  }
+
+  static const _genericItemLabels = {
+    'food items',
+    'chips & snacks',
+    'various purchases',
+    'various items',
+    'general shopping',
+    'transportation expenses',
+    'food & beverages',
+    'health items',
+    'fresh vegetables',
+    'fresh fruits',
+  };
+
+  /// Short item label — not the full spoken message.
+  String _transactionDescription({
+    required Map<dynamic, dynamic> transaction,
+    required String fullTranscription,
+    required String fallbackCategory,
+  }) {
+    final item = (transaction['item'] as String?)?.trim() ?? '';
+    final extracted = (transaction['extracted_text'] as String?)?.trim() ?? '';
+    final merchant = (transaction['merchant'] as String?)?.trim() ?? '';
+
+    if (item.isNotEmpty && !_isGenericItemLabel(item)) {
+      return item;
+    }
+
+    final smartItem = _smartItemFromText(fullTranscription);
+    if (smartItem != null) return smartItem;
+
+    final fromSpeech = _extractPurchasePhrase(fullTranscription);
+    if (fromSpeech != null && fromSpeech.isNotEmpty) {
+      return fromSpeech;
+    }
+
+    if (extracted.isNotEmpty) {
+      final fromSegment = _extractPurchasePhrase(extracted);
+      if (fromSegment != null && fromSegment.isNotEmpty) {
+        return fromSegment;
+      }
+      final smartSegmentItem = _smartItemFromText(extracted);
+      if (smartSegmentItem != null) return smartSegmentItem;
+      if (extracted.length <= 48 &&
+          extracted.length < fullTranscription.length) {
+        return extracted;
+      }
+    }
+
+    if (merchant.isNotEmpty) return merchant;
+    if (item.isNotEmpty) return item;
+    return fallbackCategory;
+  }
+
+  String _normalizeVoiceText(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll('أ', 'ا')
+        .replaceAll('إ', 'ا')
+        .replaceAll('آ', 'ا')
+        .replaceAll('ة', 'ه')
+        .replaceAll('ى', 'ي')
+        .replaceAll(RegExp(r'\bجنك\b|\bجنيك\b|\bجنه\b'), 'جنيه')
+        .replaceAll(RegExp(r'\bشكلا\b|\bشوكلا\b|\bشوكلاطه\b|\bشكولاته\b'), 'شوكولاته')
+        .replaceAll(RegExp(r'\bشبسي\b|\bشيبس\b'), 'شيبسي');
+  }
+
+  String? _smartItemFromText(String text) {
+    final t = _normalizeVoiceText(text);
+    if (t.contains('كيس')) {
+      if (t.contains('شوكولاته') || t.contains('شوكولات')) {
+        return 'كيس شوكولاتة';
+      }
+      if (t.contains('شيبسي')) return 'كيس شيبسي';
+      if (t.contains('سناكس') || t.contains('مقرمشات')) return 'كيس سناكس';
+    }
+    if (t.contains('شوكولاته') || t.contains('شوكولات')) return 'شوكولاتة';
+    if (t.contains('شيبسي')) return 'شيبسي';
+    if (t.contains('كراتي')) return 'كراتي';
+    if (t.contains('كوكيز') || t.contains('cookies')) return 'كوكيز';
+    if (t.contains('قهوه') || t.contains('قهوة')) return 'قهوة';
+    return null;
+  }
+
+  bool _isGenericItemLabel(String label) {
+    return _genericItemLabels.contains(label.toLowerCase().trim());
+  }
+
+  List<Map<String, dynamic>> _splitItemizedVoiceTransactions(String text) {
+    final normalized = _normalizeVoiceText(text)
+        .replaceAllMapped(
+          RegExp(r'(?<!\s)و(?=[\u0600-\u06FFa-zA-Z]+\s+ب)'),
+          (_) => ' و',
+        );
+    final parts = normalized
+        .split(RegExp(r'\s+و|،|,'))
+        .map((e) => e.trim())
+        .where((e) => e.length > 3)
+        .toList();
+
+    final result = <Map<String, dynamic>>[];
+    for (final part in parts) {
+      final amount = _amountFromArabicText(part);
+      if (amount == null || amount <= 0) continue;
+
+      final description = _itemFromArabicSegment(part);
+      if (description == null || description.isEmpty) continue;
+
+      final category = _inferCategoryFromText(part, fallback: 'Shopping');
+      result.add({
+        'amount': amount,
+        'category': category,
+        'description': description,
+        'original': {
+          'amount': amount,
+          'category': category,
+          'item': description,
+          'extracted_text': part,
+        },
+      });
+    }
+
+    return result;
+  }
+
+  double? _amountFromArabicText(String text) {
+    final t = _normalizeVoiceText(text);
+    final digit = RegExp(r'(\d+(?:[,.]\d+)?)\s*(?:جنيه|egp)?').firstMatch(t);
+    if (digit != null) {
+      return double.tryParse(digit.group(1)!.replaceAll(',', ''));
+    }
+
+    const words = {
+      'واحد': 1.0,
+      'واحده': 1.0,
+      'اتنين': 2.0,
+      'اثنين': 2.0,
+      'تلاته': 3.0,
+      'ثلاثه': 3.0,
+      'اربعه': 4.0,
+      'خمسه': 5.0,
+      'خمس': 5.0,
+      'سته': 6.0,
+      'سبعه': 7.0,
+      'تمانيه': 8.0,
+      'تسعه': 9.0,
+      'عشره': 10.0,
+      'عشر': 10.0,
+      'عشرين': 20.0,
+      'تلاتين': 30.0,
+      'ثلاثين': 30.0,
+      'اربعين': 40.0,
+      'خمسين': 50.0,
+      'ستين': 60.0,
+      'سبعين': 70.0,
+      'تمانين': 80.0,
+      'تسعين': 90.0,
+      'ميه': 100.0,
+    };
+
+    for (final entry in words.entries) {
+      if (RegExp('(?:^|\\s)ب?${entry.key}(?:\\s|\\b)').hasMatch(t)) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  String? _itemFromArabicSegment(String segment) {
+    var s = _normalizeVoiceText(segment);
+    s = s.replaceAll(RegExp(r'\b(?:انا|اني|جبت|اشتريت|شريت|اخدت)\b'), ' ');
+    s = s.replaceAll(
+      RegExp(
+        r'\s+ب(?:تلاتين|ثلاثين|عشره|عشر|خمسه|خمس|عشرين|اربعين|خمسين|ستين|سبعين|تمانين|تسعين|\d+).*$',
+      ),
+      '',
+    );
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final smart = _smartItemFromText(s);
+    if (smart != null) return smart;
+    if (s.length >= 2 && s.length <= 35) return s;
+    return null;
+  }
+
+  /// e.g. "مرحبا… اشتريت كيس شيبسي بخمسة جنيه" → "كيس شيبسي"
+  String? _extractPurchasePhrase(String text) {
+    final cleaned = text
+        .replaceAll(RegExp(r'^(?:مرحبا|اهلا|هاي|hello|hi)[^؟!.]*[؟!.]?\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'^(?:كيف حالك|ازيك|عامل ايه|how are you)[^؟!.]*[؟!.]?\s*', caseSensitive: false), '')
+        .trim();
+    if (cleaned.isEmpty) return null;
+
+    final patterns = [
+      RegExp(
+        r'(?:اشتريت|شريت|جبت|اخدت|كلت|شربت|paid for|bought|got)\s+(.+?)(?:\s+ب(?:ـ)?|\s+بسعر|\s+في|\s+من|\s+ع(?:لى|ل)|$)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'(?:اشتريت|شريت|جبت|bought|paid for)\s+(.+)',
+        caseSensitive: false,
+      ),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      var phrase = match.group(1)?.trim() ?? '';
+      phrase = phrase.replaceAll(RegExp(r'\s+ب(?:خمس|ست|سب|تس|عشر|\d).*$'), '').trim();
+      phrase = phrase.replaceAll(RegExp(r'[\؟\?\.\!,]+$'), '').trim();
+      if (phrase.length >= 2 && phrase.length <= 60) {
+        return phrase;
+      }
+    }
+    return null;
   }
 
   /// Map voice server categories to app categories
@@ -363,7 +623,7 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
 
   /// Infer category from Arabic text when server gives wrong category
   String _inferCategoryFromText(String text, {String fallback = 'Other'}) {
-    final t = text.toLowerCase();
+    final t = _normalizeVoiceText(text);
     if (t.contains('تاكسي') || t.contains('أوبر') || t.contains('uber') ||
         t.contains('كريم') || t.contains('careem') || t.contains('أجرة') ||
         t.contains('مواصلات') || t.contains('بنزين') || t.contains('وقود')) {
@@ -371,7 +631,9 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
     }
     if (t.contains('أكل') || t.contains('طعام') || t.contains('مطعم') ||
         t.contains('كافيه') || t.contains('قهوة') || t.contains('فطار') ||
-        t.contains('غدا') || t.contains('عشا')) {
+        t.contains('غدا') || t.contains('عشا') || t.contains('شوكولاته') ||
+        t.contains('شوكولات') || t.contains('شيبسي') || t.contains('كيس') ||
+        t.contains('كراتي') || t.contains('كوكيز')) {
       return 'Food & Drink';
     }
     if (t.contains('صيدلية') || t.contains('دكتور') || t.contains('مستشفى') ||
@@ -981,13 +1243,14 @@ class _SimpleVoiceDialogState extends State<SimpleVoiceDialog>
           const SizedBox(height: 8),
           TextField(
             controller: _transcriptionController,
-            maxLines: 2,
+            minLines: 1,
+            maxLines: 1,
             style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF0F172A)),
             decoration: InputDecoration(
               filled: true,
               fillColor: _bg,
-              hintText: 'Edit transcription…',
-              contentPadding: const EdgeInsets.all(14),
+              hintText: 'Edit what we heard…',
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
                 borderSide: const BorderSide(color: _border),

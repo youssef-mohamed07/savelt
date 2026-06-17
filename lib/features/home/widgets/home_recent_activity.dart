@@ -28,7 +28,7 @@ class HomeRecentActivity extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  'Recent Activity',
+                  'Recent Transactions',
                   style: GoogleFonts.inter(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 import '../../core/services/ocr_service.dart';
 import '../../core/services/ocr_category_classifier.dart';
 import '../../core/models/expense.dart';
@@ -11,6 +12,7 @@ import '../../features/categories/bloc/category_bloc.dart';
 import '../../features/categories/category_data_store.dart';
 import '../../features/transactions/bloc/transaction_bloc.dart';
 import '../../features/transactions/bloc/transaction_event.dart';
+import '../app_date_picker.dart';
 
 class OcrResultsDialog extends StatefulWidget {
   final OcrInvoice invoice;
@@ -34,40 +36,97 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
   static const _border = Color(0xFFE8EDF5);
 
   late List<Map<String, dynamic>> _items;
-  late final TextEditingController _receiptNoteController;
+  late DateTime _selectedDate;
+  late TimeOfDay _selectedTime;
+  late final TextEditingController _storeNameController;
+  late final TextEditingController _placeController;
+  late final TextEditingController _detailsController;
   final List<TextEditingController> _descriptionControllers = [];
 
   @override
   void initState() {
     super.initState();
     _items = _buildItemsFromInvoice();
-    _receiptNoteController = TextEditingController(text: _receiptSummary());
+    _initReceiptDateTime();
+    _initReceiptDetails();
     _initItemControllers();
   }
 
   @override
   void dispose() {
-    _receiptNoteController.dispose();
+    _storeNameController.dispose();
+    _placeController.dispose();
+    _detailsController.dispose();
     for (final c in _descriptionControllers) {
       c.dispose();
     }
     super.dispose();
   }
 
-  String _receiptSummary() {
+  void _initReceiptDateTime() {
     final inv = widget.invoice;
-    final parts = <String>[];
-    if (inv.mappedCategory.isNotEmpty && inv.mappedCategory != 'Other') {
-      parts.add(inv.mappedCategory);
+    _selectedDate = _parseInvoiceDate(inv.date) ?? DateTime.now();
+    _selectedTime = _parseInvoiceTime(inv.time) ??
+        TimeOfDay.fromDateTime(DateTime.now());
+  }
+
+  void _initReceiptDetails() {
+    final inv = widget.invoice;
+    _storeNameController = TextEditingController(text: inv.storeName?.trim() ?? '');
+    _placeController = TextEditingController(text: inv.place?.trim() ?? '');
+    _detailsController = TextEditingController(text: inv.details?.trim() ?? '');
+  }
+
+  DateTime? _parseInvoiceDate(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      return DateTime.parse(raw.trim());
+    } catch (_) {
+      return null;
     }
-    if (inv.date != null && inv.date!.trim().isNotEmpty) {
-      parts.add(inv.date!.trim());
-    }
-    if (inv.time != null && inv.time!.trim().isNotEmpty) {
-      parts.add(inv.time!.trim());
-    }
-    if (parts.isEmpty) return 'Receipt scan';
-    return parts.join(' · ');
+  }
+
+  TimeOfDay? _parseInvoiceTime(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final text = raw.trim().toLowerCase();
+    final isPm = text.contains('pm') || text.contains('م');
+    final isAm = text.contains('am') || text.contains('ص');
+    final digits = raw.replaceAll(RegExp(r'[^\d:]'), '');
+    final parts = digits.split(':');
+    if (parts.isEmpty || parts.first.isEmpty) return null;
+
+    var hour = int.tryParse(parts[0]) ?? 0;
+    final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+    if (isPm && hour < 12) hour += 12;
+    if (isAm && hour == 12) hour = 0;
+
+    return TimeOfDay(
+      hour: hour.clamp(0, 23),
+      minute: minute.clamp(0, 59),
+    );
+  }
+
+  DateTime _receiptDateTime() {
+    return DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+  }
+
+  String? _buildReceiptNotes() {
+    final store = _storeNameController.text.trim();
+    final place = _placeController.text.trim();
+    final details = _detailsController.text.trim();
+    if (store.isEmpty && place.isEmpty && details.isEmpty) return null;
+
+    final lines = <String>[];
+    if (store.isNotEmpty) lines.add('Store: $store');
+    if (place.isNotEmpty) lines.add('Place: $place');
+    if (details.isNotEmpty) lines.add(details);
+    return lines.join('\n');
   }
 
   void _initItemControllers() {
@@ -204,13 +263,16 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
 
       final amount = (item['amount'] as num).toDouble();
       final description = item['description'] as String;
+      final receiptDate = _receiptDateTime();
+      final notes = _buildReceiptNotes();
 
       expenseBloc.add(AddExpense(Expense(
         id: '${DateTime.now().millisecondsSinceEpoch}_ocr_$i',
         amount: amount,
         category: finalCategory,
         title: description,
-        date: DateTime.now(),
+        date: receiptDate,
+        notes: notes,
         isVoiceInput: false,
       )));
 
@@ -220,7 +282,7 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
           name: description,
           quantity: 1,
           unitPrice: amount,
-          date: DateTime.now(),
+          date: receiptDate,
           source: 'ocr',
         ),
       );
@@ -338,6 +400,24 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
+                'Date & time',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF64748B),
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _buildDateField(context)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildTimeField(context)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
                 'Receipt details',
                 style: GoogleFonts.inter(
                   fontSize: 12,
@@ -347,28 +427,26 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
                 ),
               ),
               const SizedBox(height: 8),
-              TextField(
-                controller: _receiptNoteController,
+              _buildReceiptTextField(
+                controller: _storeNameController,
+                label: 'Store name',
+                hint: 'e.g. Carrefour, Talabat…',
+                icon: Icons.storefront_outlined,
+              ),
+              const SizedBox(height: 8),
+              _buildReceiptTextField(
+                controller: _placeController,
+                label: 'Place',
+                hint: 'Branch, city, or address',
+                icon: Icons.location_on_outlined,
+              ),
+              const SizedBox(height: 8),
+              _buildReceiptTextField(
+                controller: _detailsController,
+                label: 'Details',
+                hint: 'Payment method, receipt no., notes…',
+                icon: Icons.notes_outlined,
                 maxLines: 2,
-                style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF0F172A)),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: _bg,
-                  hintText: 'Store or receipt note…',
-                  contentPadding: const EdgeInsets.all(14),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: _border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: _border),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: _navy, width: 1.5),
-                  ),
-                ),
               ),
               const SizedBox(height: 12),
               Container(
@@ -470,6 +548,171 @@ class _OcrResultsDialogState extends State<OcrResultsDialog> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildReceiptTextField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    int maxLines = 1,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF94A3B8),
+          ),
+        ),
+        const SizedBox(height: 4),
+        TextField(
+          controller: controller,
+          maxLines: maxLines,
+          style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF0F172A)),
+          decoration: InputDecoration(
+            isDense: true,
+            filled: true,
+            fillColor: _bg,
+            hintText: hint,
+            prefixIcon: Icon(icon, color: _navy, size: 18),
+            prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 40),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: _border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: _border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: _navy, width: 1.5),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDateField(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: () async {
+          final picked = await showAppDatePicker(
+            context: context,
+            initialDate: _selectedDate,
+            firstDate: DateTime(2015),
+            lastDate: DateTime.now().add(const Duration(days: 1)),
+            title: 'Receipt date',
+          );
+          if (picked != null) setState(() => _selectedDate = picked);
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: _bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today_rounded, color: _navy, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Date',
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                      ),
+                      Text(
+                        DateFormat('dd MMM yyyy').format(_selectedDate),
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimeField(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: () async {
+          final picked = await showAppTimePicker(
+            context: context,
+            initialTime: _selectedTime,
+            title: 'Receipt time',
+          );
+          if (picked != null) setState(() => _selectedTime = picked);
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: _bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+            child: Row(
+              children: [
+                const Icon(Icons.access_time_rounded, color: _navy, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Time',
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                      ),
+                      Text(
+                        formatDisplayTime(_selectedTime),
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

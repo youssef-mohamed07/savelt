@@ -1,11 +1,9 @@
 import { Notification } from "../../DB/models/notification.model.js";
 import { AppError } from "../../utils/AppError.js";
 import { catchError } from "../../utils/catchError.js";
-import { createUserNotification, getUnreadCount, seedNotificationsIfEmpty } from "./notification.service.js";
+import { createUserNotification, getUnreadCount } from "./notification.service.js";
 
 export const getMyNotifications = catchError(async (req, res) => {
-  await seedNotificationsIfEmpty(req.user._id);
-
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
   const notifications = await Notification.find({ user: req.user._id })
     .sort({ createdAt: -1 })

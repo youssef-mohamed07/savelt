@@ -184,8 +184,7 @@ class _ItemsPageContentState extends State<_ItemsPageContent>
                       return RefreshIndicator(
                         color: _navy,
                         onRefresh: () async {
-                          // ExpenseBloc auto-loads; brief delay for UX
-                          await Future.delayed(const Duration(milliseconds: 400));
+                          context.read<ExpenseBloc>().add(const LoadExpenses());
                         },
                         child: ListView(
                           physics: const AlwaysScrollableScrollPhysics(

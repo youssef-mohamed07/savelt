@@ -219,6 +219,13 @@ def _normalize_item(raw: RawLineItem) -> LineItem:
     )
 
 
+def _clean_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned if cleaned else None
+
+
 def validate(raw_dict: dict) -> Invoice:
     """Validate the LLM's RawInvoice dict and produce a typed Invoice."""
     raw = RawInvoice.model_validate(raw_dict)
@@ -228,6 +235,9 @@ def validate(raw_dict: dict) -> Invoice:
         time=format_time_12h(normalize_time(raw.time_raw)),
         total=normalize_number(raw.total_raw),
         category=raw.category,  # LLM's pick; category.py may override via rules
+        store_name=_clean_text(raw.store_name_raw),
+        place=_clean_text(raw.place_raw),
+        details=_clean_text(raw.details_raw),
         items=[_normalize_item(it) for it in raw.items],
     )
 

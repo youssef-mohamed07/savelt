@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from app.core.logging import get_logger
 from app.utils.text_utils import (
     normalize_arabic_text, extract_amounts_from_text, 
-    split_text_into_segments, detect_language
+    split_text_into_segments, detect_language, strip_conversational_prefix
 )
 from app.utils.cache import cached_text_analysis
 from app.utils.content_filter import content_filter
@@ -16,6 +16,7 @@ from app.models.domain import Transaction, TransactionType
 from app.models.responses import TransactionDetail, FinancialSummary, AnalysisResult
 from app.config import INCOME_KEYWORDS, EXPENSE_KEYWORDS
 from app.exceptions import NLPProcessingError, ValidationError
+from app.services.llm_transaction_extractor import extract_transactions_llm, is_llm_available
 
 logger = get_logger("nlp_service")
 
@@ -35,6 +36,7 @@ class CategoryClassifier:
                     'مطعم', 'كشري', 'فول', 'طعمية', 'قهوة', 'كافيه', 'كافي',
                     'شاي', 'عصير', 'مشروب', 'كوكاكولا', 'بيبسي', 'ماء', 'مياه معدنية',
                     'شوكولاتة', 'شوكولاته', 'حلويات', 'بسكويت', 'كيك', 'شابسي', 'شيبس',
+                    'شيبسي', 'كوكيز', 'كراتي', 'سناكس', 'مقرمشات',
                     # English keywords
                     'food', 'grocery', 'vegetables', 'fruits', 'meat', 'chicken', 'fish', 'coffee', 'tea',
                     'chocolate', 'candy', 'snacks', 'chips', 'cookies', 'cake', 'restaurant', 'cafe',
@@ -433,7 +435,13 @@ class TransactionExtractor:
     
     def extract_item(self, text: str, category: str) -> Optional[str]:
         """Extract item from text based on fixed English category"""
+        text = strip_conversational_prefix(text)
+        text = normalize_arabic_text(text)
         text_lower = text.lower()
+
+        purchase_phrase = self._extract_purchase_phrase(text)
+        if purchase_phrase:
+            return purchase_phrase
         
         # Enhanced item detection with fixed English categories
         if 'قهوة' in text_lower or 'coffee' in text_lower:
@@ -452,9 +460,13 @@ class TransactionExtractor:
         elif 'فاكهة' in text_lower or 'فواكه' in text_lower or 'fruits' in text_lower:
             return 'Fresh Fruits'
         elif 'شوكولاتة' in text_lower or 'شوكولاته' in text_lower or 'chocolate' in text_lower:
-            return 'Chocolate'
+            return 'كيس شوكولاتة' if 'كيس' in text_lower else 'Chocolate'
         elif 'شابسي' in text_lower or 'شيبس' in text_lower or 'chips' in text_lower:
-            return 'Chips & Snacks'
+            return 'كيس شيبسي' if 'كيس' in text_lower else 'Chips & Snacks'
+        elif 'كراتي' in text_lower:
+            return 'كراتي'
+        elif 'كوكيز' in text_lower or 'cookies' in text_lower:
+            return 'كوكيز'
         elif 'دواء' in text_lower or 'صيدلية' in text_lower or 'medicine' in text_lower:
             return 'Medicine & Medical Supplies'
         elif 'بنزين' in text_lower or 'وقود' in text_lower or 'gas' in text_lower or 'fuel' in text_lower:
@@ -505,7 +517,7 @@ class TransactionExtractor:
         
         # Category-based defaults (fixed English)
         category_defaults = {
-            'Food & Drinks': 'Food Items',
+            'Food & Drinks': self._fallback_food_item(text_lower),
             'Transportation': 'Transportation Expenses', 
             'Shopping': 'General Shopping',
             'Health & Beauty': 'Health Items',
@@ -516,6 +528,44 @@ class TransactionExtractor:
         }
         
         return category_defaults.get(category, 'Various Items')
+
+    def _fallback_food_item(self, text_lower: str) -> str:
+        """Avoid generic labels when ASR kept useful item context."""
+        if 'كيس' in text_lower:
+            if 'شوكولاته' in text_lower or 'شوكولاتة' in text_lower:
+                return 'كيس شوكولاتة'
+            if 'شيبسي' in text_lower or 'شيبس' in text_lower:
+                return 'كيس شيبسي'
+            return 'كيس سناكس'
+        if 'شوكولاته' in text_lower or 'شوكولاتة' in text_lower:
+            return 'شوكولاتة'
+        if 'شيبسي' in text_lower or 'شيبس' in text_lower:
+            return 'شيبسي'
+        return 'Food Items'
+
+    def _extract_purchase_phrase(self, text: str) -> Optional[str]:
+        """Pull the purchased item phrase, e.g. 'كيس شيبسي' from a full sentence."""
+        normalized = normalize_arabic_text(text)
+        patterns = [
+            r'(?:اشتريت|شريت|جبت|اخدت|كلت|شربت|paid for|bought|got)\s+(.+?)(?:\s+ب(?:ـ)?|\s+بسعر|\s+في|\s+من|\s+ع(?:لى|ل)|$)',
+            r'(?:اشتريت|شريت|جبت|bought|paid for)\s+(.+)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if not match:
+                continue
+            phrase = match.group(1).strip()
+            phrase = re.sub(
+                r'\s+ب(?:خمس|ست|سب|تس|عشر|واحد|اتن|ثل|ارب|م(?:ية|يه)|الف|\d).*$',
+                '',
+                phrase,
+                flags=re.IGNORECASE,
+            ).strip()
+            phrase = re.sub(r'[\؟\?\.\!,]+$', '', phrase).strip()
+            if len(phrase) >= 2:
+                return phrase
+        return None
     
     def determine_transaction_type(self, text: str) -> TransactionType:
         """Determine if transaction is income or expense"""
@@ -526,6 +576,7 @@ class TransactionExtractor:
     
     def extract_transaction(self, text: str, amount: Optional[float] = None) -> Transaction:
         """Extract complete transaction from text segment with fixed English categories"""
+        text = normalize_arabic_text(text)
         # If no amount provided, try to extract it
         if amount is None:
             amounts = extract_amounts_from_text(text)
@@ -606,62 +657,84 @@ class NLPService:
             
             
             # Normalize text
-            normalized_text = normalize_arabic_text(text)
+            normalized_text = normalize_arabic_text(strip_conversational_prefix(text))
             
             # Detect language if auto
             if language == "auto":
                 language = detect_language(text)
+
+            # Primary: LLM extraction (OpenAI) when configured
+            if is_llm_available():
+                llm_transactions = await extract_transactions_llm(text, language)
+                if llm_transactions:
+                    summary = self._calculate_summary(llm_transactions)
+                    processing_time = int((time.time() - start_time) * 1000)
+                    transaction_details = [
+                        TransactionDetail(**transaction.to_response_model())
+                        for transaction in llm_transactions
+                    ]
+                    logger.info(
+                        "LLM analysis completed: %d transactions, %dms",
+                        len(llm_transactions),
+                        processing_time,
+                    )
+                    return AnalysisResult(
+                        transactions=transaction_details,
+                        summary=summary,
+                        processing_time_ms=processing_time,
+                        language_detected=language,
+                    )
             
-            # Extract all amounts
-            all_amounts = extract_amounts_from_text(text)
+            # Fallback: rule-based extraction
+            all_amounts = extract_amounts_from_text(normalized_text)
             logger.debug(f"Found {len(all_amounts)} amounts: {[a[0] for a in all_amounts]}")
+
+            transactions = self._extract_itemized_transactions(
+                normalized_text,
+                all_amounts,
+            )
             
-            # Split into segments
-            segments = split_text_into_segments(text)
-            logger.debug(f"Split into {len(segments)} segments")
-            
-            # Extract transactions
-            transactions = []
-            used_amounts = set()
-            
-            for segment in segments:
-                # Filter each segment as well
-                try:
-                    content_filter.filter_text(segment)
-                except ValidationError:
-                    logger.warning(f"Skipping prohibited segment: {segment[:30]}...")
-                    continue
+            if len(transactions) < 2:
+                # Split into segments
+                segments = split_text_into_segments(normalized_text)
+                logger.debug(f"Split into {len(segments)} segments")
                 
-                # Skip segments that don't represent transactions
-                if not self._is_transaction_segment(segment):
-                    continue
+                # Extract transactions
+                transactions = []
+                used_positions = set()
                 
-                # Find amount for this segment
-                # Extract transaction amounts for this segment
-                segment_amounts = extract_amounts_from_text(segment)
-                amount = None
-                
-                if segment_amounts:
-                    # Use the first amount found in this segment
-                    amount = segment_amounts[0][0]
-                    used_amounts.add(amount)
-                    logger.debug(f"Found amount {amount} in segment: {segment[:50]}...")
-                else:
-                    # Try to assign unused amount if this looks like a spending action
-                    if self._indicates_spending(segment):
-                        for amt, pos in all_amounts:
-                            if amt not in used_amounts:
-                                amount = amt
-                                used_amounts.add(amt)
-                                logger.debug(f"Assigned unused amount {amount} to segment: {segment[:50]}...")
-                                break
-                
-                # Extract transaction with fixed English categories
-                transaction = self.extractor.extract_transaction(segment, amount)
-                
-                # Only include meaningful transactions
-                if self._is_meaningful_transaction(transaction):
-                    transactions.append(transaction)
+                for segment in segments:
+                    # Filter each segment as well
+                    try:
+                        content_filter.filter_text(segment)
+                    except ValidationError:
+                        logger.warning(f"Skipping prohibited segment: {segment[:30]}...")
+                        continue
+                    
+                    # Skip segments that don't represent transactions
+                    if not self._is_transaction_segment(segment):
+                        continue
+                    
+                    # Find amount for this segment
+                    segment_amounts = extract_amounts_from_text(segment)
+                    amount = None
+                    
+                    if segment_amounts:
+                        amount = segment_amounts[0][0]
+                        logger.debug(f"Found amount {amount} in segment: {segment[:50]}...")
+                    else:
+                        if self._indicates_spending(segment):
+                            for amt, pos in all_amounts:
+                                if pos not in used_positions:
+                                    amount = amt
+                                    used_positions.add(pos)
+                                    logger.debug(f"Assigned unused amount {amount} to segment: {segment[:50]}...")
+                                    break
+                    
+                    transaction = self.extractor.extract_transaction(segment, amount)
+                    
+                    if self._is_meaningful_transaction(transaction):
+                        transactions.append(transaction)
             
             # If no valid transactions found after filtering, return empty result
             if not transactions:
@@ -718,6 +791,64 @@ class NLPService:
         has_amount = bool(extract_amounts_from_text(segment))
         
         return has_action or has_amount
+
+    def _extract_itemized_transactions(
+        self,
+        text: str,
+        amounts: List[tuple[float, int]],
+    ) -> List[Transaction]:
+        """Extract lists like: شيبسي بتلاتين وكراتي بعشرة وكوكيز بخمسة."""
+        if len(amounts) < 2:
+            return []
+
+        text = re.sub(r'(?<!\s)و(?=[\w\u0600-\u06FF]+\s+ب)', ' و', text)
+        sorted_amounts = sorted(amounts, key=lambda x: x[1])
+        transactions: List[Transaction] = []
+
+        for index, (amount, pos) in enumerate(sorted_amounts):
+            prev_amount_pos = sorted_amounts[index - 1][1] if index > 0 else 0
+            next_amount_pos = (
+                sorted_amounts[index + 1][1]
+                if index + 1 < len(sorted_amounts)
+                else len(text)
+            )
+
+            start = max(
+                text.rfind(' و', prev_amount_pos, pos),
+                text.rfind('،', prev_amount_pos, pos),
+                text.rfind(',', prev_amount_pos, pos),
+                prev_amount_pos if index == 0 else -1,
+            )
+            if start == -1:
+                start = prev_amount_pos
+            if text[start:start + 2] == ' و':
+                start += 2
+            elif start < len(text) and text[start] in {'،', ','}:
+                start += 1
+
+            end = next_amount_pos
+            next_sep_candidates = [
+                p for p in [
+                    text.find(' و', pos),
+                    text.find('،', pos),
+                    text.find(',', pos),
+                ]
+                if p != -1 and p < next_amount_pos
+            ]
+            if next_sep_candidates:
+                end = min(next_sep_candidates)
+
+            segment = text[start:end].strip()
+            if not segment:
+                continue
+
+            # If the first item has the leading verb, keep it; otherwise the
+            # extractor can still infer item/category from the item phrase.
+            transaction = self.extractor.extract_transaction(segment, amount)
+            if self._is_meaningful_transaction(transaction):
+                transactions.append(transaction)
+
+        return transactions
     
     def _indicates_spending(self, segment: str) -> bool:
         """Check if segment indicates spending"""

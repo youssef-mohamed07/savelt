@@ -9,15 +9,34 @@ export const createTextTransactionSchema = Joi.object({
     price: Joi.number().min(0).messages({
         "number.min": "Price cannot be negative"
     }),
-    items: Joi.array().items(
-        Joi.string().hex().length(24)
+    items: Joi.alternatives().try(
+        Joi.array().items(Joi.string().hex().length(24)),
+        Joi.string()
     ).default([]),
     categoryId: Joi.string().hex().length(24).messages({
         "string.hex": "Invalid category ID format",
         "string.length": "Invalid category ID length"
     }),
     type: Joi.string().valid('expense', 'income').default('expense'),
-    notes: Joi.string().trim().max(1000)
+    notes: Joi.string().trim().max(1000),
+    voice_path: Joi.string().trim().max(500),
+    OCR_path: Joi.string().trim().max(500),
+    quantity: Joi.number().integer().min(1),
+    transactionDate: Joi.date().iso(),
+});
+
+export const createMediaTransactionSchema = Joi.object({
+    text: Joi.string().trim().min(1).max(500).required(),
+    price: Joi.alternatives().try(Joi.number().min(0), Joi.string()).optional(),
+    items: Joi.alternatives().try(
+        Joi.array().items(Joi.string().hex().length(24)),
+        Joi.string()
+    ).optional(),
+    categoryId: Joi.string().hex().length(24).optional(),
+    type: Joi.string().valid('expense', 'income').optional(),
+    notes: Joi.string().trim().max(1000).optional(),
+    quantity: Joi.alternatives().try(Joi.number().integer().min(1), Joi.string()).optional(),
+    transactionDate: Joi.alternatives().try(Joi.date().iso(), Joi.string()).optional(),
 });
 
 export const updateTransactionSchema = Joi.object({

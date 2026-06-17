@@ -370,17 +370,16 @@ class _EnhancedVoiceDialogState extends State<EnhancedVoiceDialog>
   String _extractDescription(dynamic data) {
     try {
       if (data is Map<String, dynamic>) {
-        // Check for transactions array
         final transactions = data['data']?['analysis']?['transactions'];
         if (transactions is List && transactions.isNotEmpty) {
-          final item = transactions[0]['item'];
+          final t = transactions[0] as Map<String, dynamic>;
+          final item = t['item'];
           if (item is String && item.isNotEmpty) return item;
-        }
-        
-        // Fallback to original text
-        final originalText = data['data']?['original_text'];
-        if (originalText is String && originalText.isNotEmpty) {
-          return originalText;
+
+          final extracted = t['extracted_text'];
+          if (extracted is String && extracted.isNotEmpty) {
+            return extracted;
+          }
         }
       }
       return _recognizedText;

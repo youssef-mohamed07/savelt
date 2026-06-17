@@ -28,5 +28,12 @@ const schema = new mongoose.Schema(
 );
 
 schema.index({ user: 1, date: 1 });
+schema.index({ user: 1, enabled: 1, date: 1 });
+
+schema.statics.findUpcomingForUser = function (userId) {
+  return this.find({ user: userId, enabled: true, date: { $gte: new Date() } }).sort({
+    date: 1,
+  });
+};
 
 export const Reminder = mongoose.model("Reminder", schema);

@@ -54,6 +54,21 @@ class Invoice(BaseModel):
         default=None,
         description="Inferred merchant category.",
     )
+    store_name: Optional[str] = Field(
+        default=None,
+        description="Merchant or store name as printed on the receipt header.",
+    )
+    place: Optional[str] = Field(
+        default=None,
+        description="Branch, city, street, mall, or address line if printed.",
+    )
+    details: Optional[str] = Field(
+        default=None,
+        description=(
+            "Extra receipt metadata verbatim: receipt/invoice number, "
+            "payment method, cashier, tax ID, phone — joined with ' · ' if multiple."
+        ),
+    )
     items: list[LineItem] = Field(default_factory=list)
 
 
@@ -71,6 +86,28 @@ class RawInvoice(BaseModel):
     time_raw: Optional[str] = Field(
         default=None,
         description="Time exactly as printed — do not reformat.",
+    )
+    store_name_raw: Optional[str] = Field(
+        default=None,
+        description=(
+            "Merchant or store name exactly as printed — usually the largest "
+            "text at the top of the receipt (e.g. 'Carrefour', 'مطعم الشام')."
+        ),
+    )
+    place_raw: Optional[str] = Field(
+        default=None,
+        description=(
+            "Location line exactly as printed: branch, city, street, mall, "
+            "or address. Null if not visible."
+        ),
+    )
+    details_raw: Optional[str] = Field(
+        default=None,
+        description=(
+            "Other header/footer metadata exactly as printed: receipt number, "
+            "invoice no., payment method (cash/card/visa), cashier, tax ID, "
+            "phone. Join multiple lines with ' · '."
+        ),
     )
     total_raw: Optional[str] = Field(
         default=None,

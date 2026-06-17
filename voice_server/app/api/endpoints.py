@@ -11,7 +11,6 @@ from app.models.responses import (
     SuccessResponse, ErrorResponse, ErrorDetail, TextAnalysisData, VoiceAnalysisData
 )
 from app.services.nlp_service import NLPService
-from app.services.audio_service import audio_processor
 from app.services.transcription_service import transcription_service
 from app.core.security import check_rate_limit, SecurityUtils
 from app.core.logging import get_logger, log_request, log_error
@@ -217,102 +216,45 @@ async def analyze_voice(request: Request, file: UploadFile = File(...)):
         # Generate content hash for caching
         content_hash = get_content_hash(content)
         
-        # Process audio file securely
         async with file_handler.create_temp_file(content, file.filename) as temp_path:
-            
-            # PRIORITY 1: Try direct AssemblyAI upload first (bypass all audio processing)
-            logger.info("🚀 PRIORITY: Trying direct AssemblyAI upload first")
-            try:
-                transcription, confidence = await transcription_service.transcribe_audio(
-                    temp_path, content_hash
-                )
-                
-                if transcription and len(transcription.strip()) > 5 and "دفعت خمسين جنيه" not in transcription:
-                    # We got real transcription! Use it directly
-                    logger.info(f"✅ SUCCESS: Direct upload worked! Transcription: {transcription[:50]}...")
-                    
-                    # Analyze transcription
-                    analysis_result = await nlp_service.analyze_text(transcription)
-                    
-                    # Prepare response data
-                    response_data = VoiceAnalysisData(
-                        transcription=transcription,
-                        confidence_score=confidence,
-                        language_detected=analysis_result.language_detected,
-                        audio_duration_seconds=3.0,  # Estimate
-                        analysis=analysis_result
-                    )
-                    
-                    # Log successful request
-                    duration_ms = (time.time() - start_time) * 1000
-                    log_request(logger, "POST", "/voice", 
-                               request.client.host if request.client else "unknown", 
-                               duration_ms, 200)
-                    
-                    return VoiceAnalysisResponse(
-                        data=response_data,
-                        message="Voice analysis completed successfully (direct upload)"
-                    )
-                else:
-                    logger.warning("❌ Direct upload returned demo text or empty result")
-                    
-            except Exception as direct_error:
-                logger.warning(f"❌ Direct upload failed: {direct_error}")
-            
-            # FALLBACK: Try audio processing if direct upload failed
-            logger.info("🔄 Falling back to audio processing...")
-            
-            # Process audio
-            wav_path, duration = await audio_processor.process_audio_file(temp_path)
-            
-            # Validate duration
-            if not audio_processor.validate_audio_duration(duration):
+            transcription, confidence = await transcription_service.transcribe_audio(
+                temp_path, content_hash
+            )
+
+            if not transcription or len(transcription.strip()) < 2:
                 raise ValidationError(
-                    "Audio duration must be between 0.5 and 300 seconds",
-                    field="file"
+                    "Could not transcribe audio. Please speak clearly and try again.",
+                    field="file",
                 )
-            
-            try:
-                # Transcribe audio
-                transcription, confidence = await transcription_service.transcribe_audio(
-                    wav_path, content_hash
-                )
-                
-                # Ensure we always have valid transcription text
-                if not transcription or len(transcription.strip()) < 2:
-                    # Provide robust fallback
-                    transcription = "دفعت خمسين جنيه في السوبر ماركت على خضار وفواكه"
-                    confidence = 0.85
-                    logger.info("Applied robust fallback transcription")
-                
-                logger.info(f"Final transcription: {transcription[:50]}... (confidence: {confidence:.2f})")
-                
-                # Analyze transcription
-                analysis_result = await nlp_service.analyze_text(transcription)
-                
-                # Prepare response data
-                response_data = VoiceAnalysisData(
-                    transcription=transcription,
-                    confidence_score=confidence,
-                    language_detected=analysis_result.language_detected,
-                    audio_duration_seconds=duration,
-                    analysis=analysis_result
-                )
-                
-                # Log successful request
-                duration_ms = (time.time() - start_time) * 1000
-                log_request(logger, "POST", "/voice", 
-                           request.client.host if request.client else "unknown", 
-                           duration_ms, 200)
-                
-                return VoiceAnalysisResponse(
-                    data=response_data,
-                    message="Voice analysis completed successfully"
-                )
-                
-            finally:
-                # Cleanup WAV file
-                await file_handler.cleanup_file(wav_path)
+
+            logger.info(f"Transcription: {transcription[:80]}... (confidence: {confidence:.2f})")
+
+            analysis_result = await nlp_service.analyze_text(transcription)
+
+            duration = max(0.5, len(content) / (16000 * 2))
+
+            response_data = VoiceAnalysisData(
+                transcription=transcription,
+                confidence_score=confidence,
+                language_detected=analysis_result.language_detected,
+                audio_duration_seconds=duration,
+                analysis=analysis_result,
+            )
+
+            duration_ms = (time.time() - start_time) * 1000
+            log_request(
+                logger,
+                "POST",
+                "/voice",
+                request.client.host if request.client else "unknown",
+                duration_ms,
+                200,
+            )
+
+            return VoiceAnalysisResponse(
+                data=response_data,
+                message="Voice analysis completed successfully",
+            )
     
     except ValidationError as e:
         logger.warning(f"Validation error: {e.message}")

@@ -125,3 +125,68 @@ String formatDisplayDate(DateTime? date) {
   if (isToday(date)) return 'Today';
   return '${date.day}/${date.month}/${date.year}';
 }
+
+/// Branded time picker matching the app design system.
+Future<TimeOfDay?> showAppTimePicker({
+  required BuildContext context,
+  required TimeOfDay initialTime,
+  String title = 'Select time',
+}) {
+  return showTimePicker(
+    context: context,
+    initialTime: initialTime,
+    helpText: title,
+    cancelText: 'Cancel',
+    confirmText: 'Done',
+    builder: (context, child) {
+      return Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: AppDatePickerColors.navy,
+            onPrimary: Colors.white,
+            surface: Colors.white,
+            onSurface: AppDatePickerColors.text,
+          ),
+          timePickerTheme: TimePickerThemeData(
+            backgroundColor: Colors.white,
+            hourMinuteShape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            dayPeriodShape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            dialHandColor: AppDatePickerColors.navy,
+            dialBackgroundColor: AppDatePickerColors.navy.withValues(alpha: 0.08),
+            hourMinuteTextStyle: GoogleFonts.inter(
+              fontSize: 48,
+              fontWeight: FontWeight.w700,
+            ),
+            helpTextStyle: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppDatePickerColors.muted,
+            ),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              foregroundColor: AppDatePickerColors.navy,
+              textStyle: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
+        child: child!,
+      );
+    },
+  );
+}
+
+String formatDisplayTime(TimeOfDay? time) {
+  if (time == null) return 'Select';
+  final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+  final minute = time.minute.toString().padLeft(2, '0');
+  final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+  return '$hour:$minute $period';
+}

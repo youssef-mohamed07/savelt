@@ -3,13 +3,18 @@ Configuration settings for the Finance Analyzer application
 """
 import os
 from typing import Set, List
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
-    
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+    )
     # API Configuration
     app_name: str = "Voice & Text Finance Analyzer"
     app_version: str = "1.0.0"
@@ -51,18 +56,11 @@ class Settings(BaseSettings):
     # Cache Configuration
     cache_ttl: int = Field(default=3600, env="CACHE_TTL")  # 1 hour
     cache_max_size: int = Field(default=1000, env="CACHE_MAX_SIZE")
-    
-    # Database (for future use)
-    database_url: str = Field(default="sqlite:///./finance_analyzer.db", env="DATABASE_URL")
-    
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Convert CORS origins string to list"""
         return [origin.strip() for origin in self.cors_origins.split(",")]
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 # Global settings instance

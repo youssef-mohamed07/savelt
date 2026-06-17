@@ -18,7 +18,7 @@ import { sanitizeInput, preventNoSQLInjection } from "./src/middleware/sanitize.
 import { apiLimiter } from "./src/middleware/rateLimiter.js";
 
 // Local imports - Database & Routes
-import { dbConnection } from "./src/DB/dbConnection.js";
+import { connectDatabase } from "./src/config/database.js";
 import { bootstrap } from "./src/module/bootStrap.js";
 
 // Initialize Express app
@@ -71,8 +71,9 @@ console.log("[SERVER] Server is starting...");
 import http from 'http';
 import { startWsServer } from "./src/module/analysis/wsServer.js";
 
-// Default HTTP port (3001) to match your expectation
 const httpPort = process.env.PORT || 3001;
+
+await connectDatabase();
 
 const server = http.createServer(app);
 server.listen(httpPort, "0.0.0.0", () => console.log(`[SERVER] Server listening on port ${httpPort}!`));

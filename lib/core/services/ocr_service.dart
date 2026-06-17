@@ -102,6 +102,9 @@ class OcrInvoice {
   final String? time;
   final double? total;
   final String? category;
+  final String? storeName;
+  final String? place;
+  final String? details;
   final List<OcrLineItem> items;
 
   const OcrInvoice({
@@ -109,6 +112,9 @@ class OcrInvoice {
     this.time,
     this.total,
     this.category,
+    this.storeName,
+    this.place,
+    this.details,
     required this.items,
   });
 
@@ -119,6 +125,9 @@ class OcrInvoice {
       time: json['time']?.toString(),
       total: (json['total'] as num?)?.toDouble(),
       category: json['category']?.toString(),
+      storeName: json['store_name']?.toString(),
+      place: json['place']?.toString(),
+      details: json['details']?.toString(),
       items: rawItems
           .map((e) => OcrLineItem.fromJson(e as Map<String, dynamic>))
           .toList(),

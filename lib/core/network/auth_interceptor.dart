@@ -57,6 +57,8 @@ class AuthInterceptor extends Interceptor {
       '/auth/signup/configurationOTP',
       '/auth/forgetPassword',
       '/auth/resendOTP',
+      '/auth/google',
+      '/auth/setNewPassword',
     ];
     return skipPaths.any((skipPath) => path.contains(skipPath));
   }
